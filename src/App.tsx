@@ -1,4 +1,8 @@
-import { useEffect, useState } from 'react';
+import {
+  useEffect,
+  useState,
+} from 'react';
+
 import {
   NavLink,
   Navigate,
@@ -6,22 +10,44 @@ import {
   Routes,
   useLocation,
 } from 'react-router-dom';
+
 import type { Session } from '@supabase/supabase-js';
 
-import { supabase, EventRow } from './lib/supabase';
+import {
+  supabase,
+  EventRow,
+} from './lib/supabase';
+
 import Login from './pages/Login';
 import Settings from './pages/Settings';
 import CreatePass from './pages/CreatePass';
 import Guests from './pages/Guests';
 import Dashboard from './pages/Dashboard';
+
 import VyraBackground from './components/VyraBackground';
 import Icon from './components/Icon';
 
 const nav = [
-  ['/','dashboard','Dashboard'],
-  ['/create','ticket','Create Pass'],
-  ['/guests','users','Guests'],
-  ['/settings','settings','Event Settings'],
+  {
+    to: '/',
+    icon: 'dashboard',
+    label: 'Dashboard',
+  },
+  {
+    to: '/create',
+    icon: 'ticket',
+    label: 'Create Pass',
+  },
+  {
+    to: '/guests',
+    icon: 'users',
+    label: 'Guests',
+  },
+  {
+    to: '/settings',
+    icon: 'settings',
+    label: 'Event Settings',
+  },
 ] as const;
 
 function Shell({
@@ -47,157 +73,242 @@ function Shell({
           : 'Event Settings';
 
   return (
-    <div className="min-h-screen lg:flex">
+    <div className="relative z-10 min-h-screen lg:flex">
 
-      {/* SIDEBAR */}
-      <aside className="glass fixed inset-x-0 bottom-0 z-30 border-x-0 border-b-0 rounded-none p-2 lg:static lg:flex lg:w-[270px] lg:shrink-0 lg:flex-col lg:border-y-0 lg:border-l-0 lg:p-6 lg:rounded-none">
+      {/* ==================================
+          SIDEBAR
+      ================================== */}
 
-        <div className="sidebar-glow" />
+      <aside
+        className="
+          glass
+          fixed
+          inset-x-0
+          bottom-0
+          z-30
+          rounded-none
+          border-x-0
+          border-b-0
+          p-2
+
+          lg:static
+          lg:flex
+          lg:w-[280px]
+          lg:shrink-0
+          lg:flex-col
+          lg:border-y-0
+          lg:border-l-0
+          lg:p-6
+        "
+      >
 
         {/* LOGO */}
-        <div className="relative hidden lg:block">
-          <img
-            src="/vyra-logo.jpg"
-            alt="VYRA Entertainment"
-            className="mx-auto mb-5 w-full max-w-[190px] mix-blend-screen"
-          />
 
-          <div className="mb-8 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent" />
+        <div className="hidden lg:block">
+
+          <div className="flex justify-center">
+
+            <img
+              src="/vyra-logo.jpg"
+              alt="VYRA Entertainment"
+              className="
+                w-[205px]
+                object-contain
+                mix-blend-screen
+              "
+            />
+
+          </div>
+
+          <div className="my-7 h-px bg-gradient-to-r from-transparent via-white/[.09] to-transparent" />
+
         </div>
 
-        {/* SECTION */}
-        <div className="relative mb-4 hidden items-center gap-2 px-2 text-[9px] uppercase tracking-[.32em] text-zinc-600 lg:flex">
+        {/* LABEL */}
+
+        <div className="mb-4 hidden items-center gap-2 px-2 text-[9px] uppercase tracking-[.3em] text-zinc-600 lg:flex">
+
           <span className="h-1.5 w-1.5 rounded-full bg-amber-300" />
+
           Event Operations
+
         </div>
 
         {/* NAV */}
-        <nav className="relative flex items-center justify-around gap-1 lg:flex-col lg:items-stretch lg:justify-start lg:gap-2">
 
-          {nav.map(([to, ico, label]) => (
+        <nav className="flex items-center justify-around gap-1 lg:flex-col lg:items-stretch lg:justify-start lg:gap-2">
+
+          {nav.map((item) => (
             <NavLink
-              key={to}
-              to={to}
-              end={to === '/'}
+              key={item.to}
+              to={item.to}
+              end={item.to === '/'}
               className={({ isActive }) =>
                 `nav-item group flex items-center justify-center gap-3 rounded-2xl border px-3 py-3 transition md:px-4 md:py-3.5 lg:justify-start ${
                   isActive
-                    ? 'active border-amber-300/20 bg-amber-300/[.045] text-amber-100 shadow-[0_12px_35px_rgba(222,171,86,.06)]'
+                    ? 'active border-amber-300/25 bg-amber-300/[.045] text-amber-100'
                     : 'border-transparent text-zinc-500 hover:border-white/[.07] hover:bg-white/[.02] hover:text-zinc-100'
                 }`
               }
             >
-              <Icon name={ico} size={19} />
+
+              <Icon
+                name={item.icon}
+                size={19}
+              />
 
               <span className="hidden sm:inline lg:inline">
-                {label}
+                {item.label}
               </span>
+
             </NavLink>
           ))}
 
         </nav>
 
-        {/* DESKTOP FOOT */}
-        <div className="relative mt-auto hidden pt-8 lg:block">
+        {/* DESKTOP FOOTER */}
 
-          <div className="mb-5 h-px bg-gradient-to-r from-transparent via-white/[.08] to-transparent" />
+        <div className="mt-auto hidden lg:block">
 
-          <div className="flex items-center justify-between px-2 text-xs">
+          <div className="my-7 h-px bg-gradient-to-r from-transparent via-white/[.08] to-transparent" />
 
-            <span
-              className={
+          <div className="flex items-center justify-between px-2">
+
+            <div
+              className={`flex items-center gap-2 text-xs ${
                 online
                   ? 'text-emerald-300'
                   : 'text-red-300'
-              }
+              }`}
             >
-              <span className="mr-2 inline-block h-1.5 w-1.5 rounded-full bg-current" />
-              {online ? 'Online' : 'Offline'}
-            </span>
+
+              <span className="h-1.5 w-1.5 rounded-full bg-current" />
+
+              {online
+                ? 'Online'
+                : 'Offline'}
+
+            </div>
 
             <button
               onClick={onSignOut}
-              className="flex items-center gap-2 text-zinc-500 transition hover:text-zinc-100"
+              className="flex items-center gap-2 text-xs text-zinc-500 transition hover:text-zinc-100"
             >
-              <Icon name="logout" size={15} />
+
+              <Icon
+                name="logout"
+                size={15}
+              />
+
               Sign out
+
             </button>
 
           </div>
 
-          <p className="mt-6 text-center text-[8px] uppercase tracking-[.35em] text-zinc-700">
+          <p className="mt-8 text-center text-[8px] uppercase tracking-[.38em] text-zinc-700">
             Beyond the ordinary
           </p>
+
         </div>
 
-        {/* MOBILE */}
+        {/* MOBILE SIGN OUT */}
+
         <button
           onClick={onSignOut}
-          className="rounded-xl px-3 py-3 text-zinc-600 transition hover:text-zinc-200 lg:hidden"
+          className="rounded-xl px-3 py-3 text-zinc-500 lg:hidden"
           aria-label="Sign out"
         >
-          <Icon name="logout" size={18} />
+          <Icon
+            name="logout"
+            size={18}
+          />
         </button>
 
       </aside>
 
-      {/* MAIN */}
-      <main className="min-w-0 flex-1 pb-24 lg:pb-0">
+      {/* ==================================
+          MAIN CONTENT
+      ================================== */}
 
-        <div className="mx-auto max-w-[1500px] p-4 sm:p-6 md:p-8 lg:p-10 xl:p-12">
+      <main
+        className="
+          relative
+          z-10
+          min-w-0
+          flex-1
+          pb-24
+          lg:pb-0
+        "
+      >
+
+        <div className="mx-auto max-w-[1500px] p-4 sm:p-6 md:p-8 lg:p-10 xl:p-11">
 
           {/* TOP BAR */}
+
           <header className="mb-8 flex items-center justify-between gap-4 border-b border-white/[.06] pb-5">
 
             <div>
+
               <p className="text-[9px] uppercase tracking-[.34em] text-amber-200/55">
                 {pageTitle}
               </p>
 
-              <div className="mt-1 flex items-center gap-2">
-                <span className="text-xs text-zinc-600">
-                  {ev.name}
-                </span>
+              <p className="mt-1 text-xs text-zinc-600">
+                {ev.name}
+              </p>
 
-                <span className="text-zinc-800">•</span>
-
-                <span className="text-[10px] uppercase tracking-[.18em] text-zinc-700">
-                  VYRA
-                </span>
-              </div>
             </div>
 
-            <div className="flex items-center gap-2 rounded-full border border-white/[.07] bg-black/25 px-3 py-2 text-[11px] text-zinc-500">
+            <div className="flex items-center gap-3">
 
-              <span
-                className={`h-1.5 w-1.5 rounded-full ${
-                  online
-                    ? 'bg-emerald-300'
-                    : 'bg-red-300'
-                }`}
-              />
+              <div className="hidden items-center gap-2 rounded-full border border-white/[.07] bg-black/30 px-3 py-2 text-[11px] text-zinc-500 sm:flex">
 
-              {online ? 'Online' : 'Offline'}
+                <span
+                  className={`h-1.5 w-1.5 rounded-full ${
+                    online
+                      ? 'bg-emerald-300'
+                      : 'bg-red-300'
+                  }`}
+                />
+
+                {online
+                  ? 'Online'
+                  : 'Offline'}
+
+              </div>
+
+              <div className="hidden h-9 w-9 items-center justify-center rounded-full border border-white/[.08] bg-black/30 text-sm text-zinc-300 sm:flex">
+                V
+              </div>
 
             </div>
 
           </header>
 
+          {/* ROUTES */}
+
           <Routes>
 
             <Route
               path="/"
-              element={<Dashboard ev={ev} />}
+              element={
+                <Dashboard ev={ev} />
+              }
             />
 
             <Route
               path="/create"
-              element={<CreatePass ev={ev} />}
+              element={
+                <CreatePass ev={ev} />
+              }
             />
 
             <Route
               path="/guests"
-              element={<Guests ev={ev} />}
+              element={
+                <Guests ev={ev} />
+              }
             />
 
             <Route
@@ -212,80 +323,107 @@ function Shell({
 
             <Route
               path="*"
-              element={<Navigate to="/" replace />}
+              element={
+                <Navigate
+                  to="/"
+                  replace
+                />
+              }
             />
 
           </Routes>
 
         </div>
+
       </main>
+
     </div>
   );
 }
 
 export default function App() {
-  const [s, setS] =
+
+  const [session, setSession] =
     useState<Session | null>(null);
 
-  const [ready, setReady] = useState(false);
+  const [ready, setReady] =
+    useState(false);
 
-  const [ev, setEv] =
+  const [event, setEvent] =
     useState<EventRow | null>(null);
 
   const [online, setOnline] =
-    useState(navigator.onLine);
+    useState(
+      navigator.onLine
+    );
 
   useEffect(() => {
 
     supabase.auth
       .getSession()
       .then(({ data }) => {
-        setS(data.session);
+
+        setSession(
+          data.session
+        );
+
         setReady(true);
+
       });
 
-    const { data } =
+    const {
+      data,
+    } =
       supabase.auth.onAuthStateChange(
-        (_, session) => {
-          setS(session);
+        (_, nextSession) => {
+
+          setSession(
+            nextSession
+          );
+
         }
       );
 
-    const handleOnline = () =>
-      setOnline(true);
+    const onlineHandler =
+      () => setOnline(true);
 
-    const handleOffline = () =>
-      setOnline(false);
+    const offlineHandler =
+      () => setOnline(false);
 
-    addEventListener(
+    window.addEventListener(
       'online',
-      handleOnline
+      onlineHandler
     );
 
-    addEventListener(
+    window.addEventListener(
       'offline',
-      handleOffline
+      offlineHandler
     );
 
     return () => {
+
       data.subscription.unsubscribe();
 
-      removeEventListener(
+      window.removeEventListener(
         'online',
-        handleOnline
+        onlineHandler
       );
 
-      removeEventListener(
+      window.removeEventListener(
         'offline',
-        handleOffline
+        offlineHandler
       );
+
     };
 
   }, []);
 
   useEffect(() => {
 
-    if (!s) return;
+    if (!session) {
+      setEvent(null);
+      return;
+    }
 
     supabase
       .from('events')
@@ -294,61 +432,86 @@ export default function App() {
       .limit(1)
       .maybeSingle()
       .then(({ data }) => {
-        setEv(data);
+
+        setEvent(data);
+
       });
 
-  }, [s]);
+  }, [session]);
 
   if (!ready) {
+
     return (
-      <>
+      <div className="relative min-h-screen">
+
         <VyraBackground />
 
-        <div className="grid min-h-screen place-items-center text-sm text-zinc-600">
+        <div className="relative z-10 grid min-h-screen place-items-center text-sm text-zinc-600">
           Loading PartyPass…
         </div>
-      </>
+
+      </div>
     );
+
   }
 
-  if (!s) {
+  if (!session) {
+
     return (
-      <>
+      <div className="relative min-h-screen">
+
         <VyraBackground />
-        <Login />
-      </>
+
+        <div className="relative z-10">
+          <Login />
+        </div>
+
+      </div>
     );
+
   }
 
-  if (!ev) {
+  if (!event) {
+
     return (
-      <>
+      <div className="relative min-h-screen">
+
         <VyraBackground />
 
-        <div className="mx-auto min-h-screen max-w-3xl p-5 md:p-10">
+        <div className="relative z-10 mx-auto min-h-screen max-w-3xl p-5 md:p-10">
+
           <Settings
             ev={null}
-            onSaved={(event) =>
-              setEv(event)
+            onSaved={(savedEvent) =>
+              setEvent(savedEvent)
             }
           />
+
         </div>
-      </>
+
+      </div>
     );
+
   }
 
   return (
-    <>
+    <div className="relative min-h-screen">
+
+      {/* BACKGROUND FIRST */}
+
       <VyraBackground />
 
+      {/* UI ABOVE BACKGROUND */}
+
       <Shell
-        ev={ev}
+        ev={event}
         online={online}
         onSignOut={() =>
           supabase.auth.signOut()
         }
-        onSaved={setEv}
+        onSaved={setEvent}
       />
-    </>
+
+    </div>
   );
 }

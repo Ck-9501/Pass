@@ -1,7 +1,17 @@
-import { useEffect, useState } from 'react';
+import {
+  useEffect,
+  useState,
+} from 'react';
+
 import toast from 'react-hot-toast';
 import { Link } from 'react-router-dom';
-import { supabase, EventRow, Guest } from '../lib/supabase';
+
+import {
+  supabase,
+  EventRow,
+  Guest,
+} from '../lib/supabase';
+
 import Icon from '../components/Icon';
 
 export default function Dashboard({
@@ -23,15 +33,18 @@ export default function Dashboard({
     useState(true);
 
   useEffect(() => {
-    let alive = true;
+
+    let mounted = true;
 
     (async () => {
+
       const [
         recent,
         total,
         checked,
         revoked,
       ] = await Promise.all([
+
         supabase
           .from('guests')
           .select('*')
@@ -66,9 +79,12 @@ export default function Dashboard({
           })
           .eq('event_id', ev.id)
           .eq('status', 'revoked'),
+
       ]);
 
-      if (!alive) return;
+      if (!mounted) {
+        return;
+      }
 
       if (
         recent.error ||
@@ -92,11 +108,13 @@ export default function Dashboard({
       });
 
       setLoading(false);
+
     })();
 
     return () => {
-      alive = false;
+      mounted = false;
     };
+
   }, [ev.id]);
 
   const notArrived = Math.max(
@@ -110,118 +128,140 @@ export default function Dashboard({
     {
       label: 'TOTAL GUESTS',
       value: counts.total,
-      icon: 'users',
-      accent: 'text-amber-200',
+      icon: 'users' as const,
+      color: 'text-amber-200',
     },
     {
       label: 'CHECKED IN',
       value: counts.checked,
-      icon: 'check',
-      accent: 'text-emerald-300',
+      icon: 'check' as const,
+      color: 'text-emerald-300',
     },
     {
       label: 'NOT ARRIVED',
       value: notArrived,
-      icon: 'clock',
-      accent: 'text-amber-100',
+      icon: 'clock' as const,
+      color: 'text-amber-100',
     },
     {
       label: 'REVOKED',
       value: counts.revoked,
-      icon: 'ban',
-      accent: 'text-red-300',
+      icon: 'ban' as const,
+      color: 'text-red-300',
     },
-  ] as const;
+  ];
 
-  const time = (date: string) =>
-    new Date(date).toLocaleTimeString([], {
-      hour: 'numeric',
-      minute: '2-digit',
-    });
+  const getStatus = (
+    status: Guest['status']
+  ) => {
 
-  const statusText = (status: Guest['status']) => {
     if (status === 'checked_in') {
-      return 'Checked in';
+      return {
+        label: 'Checked In',
+        className: 'text-emerald-300',
+      };
     }
 
     if (status === 'revoked') {
-      return 'Revoked';
+      return {
+        label: 'Revoked',
+        className: 'text-red-300',
+      };
     }
 
-    return 'Not arrived';
+    return {
+      label: 'Not Arrived',
+      className: 'text-amber-200',
+    };
+
   };
 
-  const statusClass =
-    (status: Guest['status']) => {
-      if (status === 'checked_in') {
-        return 'text-emerald-300';
+  const formatTime = (
+    value: string
+  ) =>
+    new Date(value).toLocaleTimeString(
+      [],
+      {
+        hour: 'numeric',
+        minute: '2-digit',
       }
-
-      if (status === 'revoked') {
-        return 'text-red-300';
-      }
-
-      return 'text-amber-200';
-    };
+    );
 
   return (
     <div className="page-in space-y-7">
 
-      {/* HERO */}
-      <section className="grid gap-5 xl:grid-cols-[1.2fr_.8fr]">
+      {/* ==================================
+          HERO
+      ================================== */}
 
-        <div className="relative px-1 py-3 md:py-5">
+      <section className="grid gap-5 xl:grid-cols-[1.18fr_.82fr]">
 
-          <p className="hero-kicker">
-            Command center
+        <div className="relative pt-2 md:pt-5">
+
+          <p className="text-[10px] uppercase tracking-[.34em] text-amber-200/60">
+            Command Center
           </p>
 
-          <h1 className="hero-title font-display mt-3 max-w-4xl text-5xl leading-[.94] text-white sm:text-6xl xl:text-7xl">
+          <h1 className="hero-title font-display mt-3 text-5xl leading-[.92] text-white sm:text-6xl xl:text-[4.8rem]">
+
             Welcome Back,
+
             <br />
+
             <span className="text-zinc-300">
               VYRA Entertainment
             </span>
+
           </h1>
 
-          <p className="mt-6 max-w-xl text-[10px] uppercase tracking-[.27em] text-zinc-600 sm:text-xs">
+          <p className="mt-6 max-w-2xl text-[10px] uppercase tracking-[.28em] text-zinc-600 sm:text-xs">
+
             Manage your event
+
             <span className="mx-2 text-amber-300/50">
               •
             </span>
+
             Create guest passes
+
             <span className="mx-2 text-amber-300/50">
               •
             </span>
+
             Track check-ins
+
           </p>
+
         </div>
 
-        {/* EVENT */}
-        <div className="event-card glass rounded-[28px] p-5 md:p-6">
+        {/* CURRENT EVENT */}
 
-          <div className="flex items-start justify-between">
+        <div className="event-card glass rounded-[26px] p-5 md:p-6">
+
+          <div className="flex items-start justify-between gap-4">
 
             <div>
+
               <p className="text-[9px] uppercase tracking-[.3em] text-zinc-600">
-                Current event
+                Current Event
               </p>
 
               <h2 className="font-display mt-2 text-4xl text-zinc-100">
                 {ev.name}
               </h2>
+
             </div>
 
-            <div className="rounded-2xl border border-amber-300/15 bg-amber-300/[.045] p-3 text-amber-200">
+            <div className="rounded-full border border-amber-300/15 bg-amber-300/[.04] p-2.5 text-amber-200">
               <Icon
                 name="calendar"
-                size={20}
+                size={18}
               />
             </div>
 
           </div>
 
-          <div className="mt-6 grid grid-cols-2 gap-x-5 gap-y-5">
+          <div className="mt-6 grid grid-cols-2 gap-5">
 
             <div>
               <p className="text-[9px] uppercase tracking-[.18em] text-zinc-600">
@@ -265,12 +305,16 @@ export default function Dashboard({
 
           </div>
 
-          <div className="mt-6 h-px bg-gradient-to-r from-amber-300/30 via-white/[.05] to-transparent" />
+          <div className="mt-6 h-px bg-gradient-to-r from-amber-300/30 via-white/[.06] to-transparent" />
 
         </div>
+
       </section>
 
-      {/* STATS */}
+      {/* ==================================
+          STATS
+      ================================== */}
+
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
 
         {stats.map((stat) => (
@@ -279,7 +323,9 @@ export default function Dashboard({
             className="stat-card glass rounded-[24px] p-5"
           >
 
-            <div className={`mb-7 ${stat.accent}`}>
+            <div
+              className={`mb-7 ${stat.color}`}
+            >
               <Icon
                 name={stat.icon}
                 size={23}
@@ -290,65 +336,77 @@ export default function Dashboard({
               {stat.label}
             </p>
 
-            <p className="mt-2 text-4xl font-medium tracking-tight text-white">
+            <p className="mt-2 text-4xl text-white">
               {stat.value}
             </p>
 
-            <div className="mt-5 h-px w-1/2 bg-gradient-to-r from-current to-transparent opacity-50" />
+            <div className="mt-6 h-px w-[52%] bg-gradient-to-r from-current to-transparent opacity-50" />
 
           </div>
         ))}
 
       </section>
 
-      {/* LOWER */}
-      <section className="grid gap-5 xl:grid-cols-[1.4fr_.8fr]">
+      {/* ==================================
+          RECENT + ACTIONS
+      ================================== */}
+
+      <section className="grid gap-5 xl:grid-cols-[1.42fr_.8fr]">
 
         {/* RECENT */}
-        <div className="glass rounded-[26px] p-5 md:p-6">
 
-          <div className="mb-5 flex items-end justify-between gap-4">
+        <div className="glass rounded-[24px] p-5 md:p-6">
+
+          <div className="mb-5 flex items-center justify-between">
 
             <div>
-              <p className="text-[9px] uppercase tracking-[.3em] text-zinc-600">
-                Guest activity
+
+              <p className="text-[9px] uppercase tracking-[.28em] text-zinc-600">
+                Guest Activity
               </p>
 
               <h3 className="font-display mt-1 text-3xl">
                 Recent Guests
               </h3>
+
             </div>
 
             <Link
               to="/guests"
-              className="rounded-full border border-white/[.07] px-3 py-2 text-[10px] uppercase tracking-[.15em] text-zinc-500 transition hover:border-amber-300/20 hover:text-amber-200"
+              className="text-xs text-zinc-400 transition hover:text-amber-200"
             >
-              View all
+              View all →
             </Link>
 
           </div>
 
           {loading ? (
+
             <div className="py-12 text-center text-sm text-zinc-600">
               Loading guests…
             </div>
+
           ) : !rows.length ? (
+
             <div className="rounded-2xl border border-dashed border-white/[.07] py-12 text-center text-sm text-zinc-600">
               No guest passes yet.
             </div>
+
           ) : (
+
             <div className="overflow-x-auto">
 
-              <table className="w-full min-w-[560px] text-left">
+              <table className="w-full min-w-[620px] text-left">
 
-                <thead className="text-[9px] uppercase tracking-[.18em] text-zinc-600">
+                <thead className="text-[9px] uppercase tracking-[.2em] text-zinc-600">
+
                   <tr>
                     <th className="px-3 py-3">
-                      Guest
+                      Name
                     </th>
 
                     <th className="px-3 py-3">
-                      Type
+                      Pass Type
                     </th>
 
                     <th className="px-3 py-3">
@@ -356,76 +414,91 @@ export default function Dashboard({
                     </th>
 
                     <th className="px-3 py-3">
-                      Check-in
+                      Check-in Time
                     </th>
                   </tr>
+
                 </thead>
 
                 <tbody>
-                  {rows.map((guest) => (
-                    <tr
-                      key={guest.id}
-                      className="border-t border-white/[.055] transition hover:bg-white/[.015]"
-                    >
-                      <td className="px-3 py-4 text-sm text-zinc-100">
-                        {guest.name}
-                      </td>
 
-                      <td className="px-3 py-4 text-xs text-zinc-500">
-                        {guest.pass_type}
-                      </td>
+                  {rows.map((guest) => {
 
-                      <td className="px-3 py-4">
+                    const info =
+                      getStatus(
+                        guest.status
+                      );
 
-                        <span
-                          className={`inline-flex items-center gap-2 text-xs ${statusClass(guest.status)}`}
-                        >
-                          <span className="h-1.5 w-1.5 rounded-full bg-current" />
-                          {statusText(
-                            guest.status
-                          )}
-                        </span>
+                    return (
+                      <tr
+                        key={guest.id}
+                        className="border-t border-white/[.055] transition hover:bg-white/[.015]"
+                      >
 
-                      </td>
+                        <td className="px-3 py-4 text-sm text-zinc-100">
+                          {guest.name}
+                        </td>
 
-                      <td className="px-3 py-4 text-xs text-zinc-600">
-                        {guest.checked_in_at
-                          ? time(
-                              guest.checked_in_at
-                            )
-                          : '—'}
-                      </td>
-                    </tr>
-                  ))}
+                        <td className="px-3 py-4 text-xs text-zinc-500">
+                          {guest.pass_type}
+                        </td>
+
+                        <td className="px-3 py-4">
+
+                          <span
+                            className={`inline-flex items-center gap-2 text-xs ${info.className}`}
+                          >
+                            <span className="h-1.5 w-1.5 rounded-full bg-current" />
+
+                            {info.label}
+                          </span>
+
+                        </td>
+
+                        <td className="px-3 py-4 text-xs text-zinc-600">
+                          {guest.checked_in_at
+                            ? formatTime(
+                                guest.checked_in_at
+                              )
+                            : '—'}
+                        </td>
+
+                      </tr>
+                    );
+
+                  })}
+
                 </tbody>
 
               </table>
 
             </div>
+
           )}
 
         </div>
 
         {/* QUICK ACTIONS */}
-        <div className="glass rounded-[26px] p-5 md:p-6">
 
-          <div className="mb-5">
-            <p className="text-[9px] uppercase tracking-[.3em] text-zinc-600">
-              Shortcuts
-            </p>
+        <div className="glass rounded-[24px] p-5 md:p-6">
 
-            <h3 className="font-display mt-1 text-3xl">
-              Quick Actions
-            </h3>
-          </div>
+          <p className="text-[9px] uppercase tracking-[.28em] text-zinc-600">
+            Operations
+          </p>
 
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
+          <h3 className="font-display mt-1 text-3xl">
+            Quick Actions
+          </h3>
+
+          <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
 
             <Link
               to="/create"
-              className="quick-card rounded-2xl border border-amber-300/10 bg-amber-300/[.025] p-4"
+              className="quick-card rounded-2xl border border-amber-300/15 bg-amber-300/[.025] p-4"
             >
+
               <div className="flex items-center justify-between">
+
                 <span className="text-amber-200">
                   <Icon
                     name="ticket"
@@ -436,24 +509,28 @@ export default function Dashboard({
                 <Icon
                   name="chevron"
                   size={17}
-                  className="text-zinc-700"
+                  className="text-zinc-700 transition group-hover:translate-x-1"
                 />
+
               </div>
 
-              <p className="mt-7 text-sm font-medium">
+              <p className="mt-7 text-sm font-medium text-white">
                 Create Pass
               </p>
 
               <p className="mt-1 text-xs text-zinc-600">
-                Generate a new guest entry pass
+                Generate a new guest pass
               </p>
+
             </Link>
 
             <Link
               to="/guests"
               className="quick-card rounded-2xl border border-white/[.07] p-4"
             >
+
               <div className="flex items-center justify-between">
+
                 <span className="text-zinc-300">
                   <Icon
                     name="users"
@@ -466,22 +543,26 @@ export default function Dashboard({
                   size={17}
                   className="text-zinc-700"
                 />
+
               </div>
 
-              <p className="mt-7 text-sm font-medium">
+              <p className="mt-7 text-sm font-medium text-white">
                 View Guests
               </p>
 
               <p className="mt-1 text-xs text-zinc-600">
-                Search and manage guest passes
+                Manage your guest list
               </p>
+
             </Link>
 
             <Link
               to="/settings"
               className="quick-card rounded-2xl border border-white/[.07] p-4"
             >
+
               <div className="flex items-center justify-between">
+
                 <span className="text-zinc-300">
                   <Icon
                     name="settings"
@@ -494,27 +575,37 @@ export default function Dashboard({
                   size={17}
                   className="text-zinc-700"
                 />
+
               </div>
 
-              <p className="mt-7 text-sm font-medium">
-                Event Settings
+              <p className="mt-7 text-sm font-medium text-white">
+                Settings
               </p>
 
               <p className="mt-1 text-xs text-zinc-600">
-                Update event information
+                Update event details
               </p>
+
             </Link>
 
           </div>
+
         </div>
 
       </section>
 
-      {/* FOOT */}
-      <div className="flex items-center gap-4 pb-4 pt-2 text-[9px] uppercase tracking-[.42em] text-zinc-700">
+      {/* FOOTER */}
+
+      <div className="flex items-center gap-4 pb-3 pt-1">
+
         <span className="h-px flex-1 bg-gradient-to-r from-transparent to-amber-300/20" />
-        BEYOND THE ORDINARY
+
+        <span className="text-[9px] uppercase tracking-[.42em] text-zinc-700">
+          Beyond the Ordinary
+        </span>
+
         <span className="h-px flex-1 bg-gradient-to-l from-transparent to-amber-300/20" />
+
       </div>
 
     </div>
