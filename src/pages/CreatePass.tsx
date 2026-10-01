@@ -1,758 +1,1426 @@
-import { useState } from 'react';
-import toast from 'react-hot-toast';
-import {
-  supabase,
-  EventRow,
-  Guest,
-} from '../lib/supabase';
-import {
-  newPassId,
-  newToken,
+import { useEffect, useMemo, useRef, useState } from "react";
+import QRCode from "qrcode";
+import html2canvas from "html2canvas";
+import { jsPDF } from "jspdf";
+
+import { supabase, EventRow, Guest } from "../lib/supabase";
+import Icon from "../components/Icon";
+
+interface CreatePassProps {
+  ev: EventRow | null;
+  events: EventRow[];
+  onSelected: (event: EventRow) => void;
+}
+
+const PASS_TYPES = [
+  "Regular",
+  "Early Bird",
+  "Couple",
+  "Surge Pass",
+];
+
+function makePassId() {
+  const shortId = crypto
+    .randomUUID()
+    .replace(/-/g, "")
+    .slice(0, 8)
+    .toUpperCase();
+
+  return `VYRA-${shortId}`;
+}
+
+function makeQrToken() {
+  return `VYRA-${crypto.randomUUID()}`;
+}
+
+function formatDate(date: string | null) {
+  if (!date) return "TBA";
+
+  const parts = date.split("-");
+
+  if (parts.length !== 3) {
+    return date;
+  }
+
+  const [year, month, day] = parts;
+
+  const months = [
+    "JAN",
+    "FEB",
+    "MAR",
+    "APR",
+    "MAY",
+    "JUN",
+    "JUL",
+    "AUG",
+    "SEP",
+    "OCT",
+    "NOV",
+    "DEC",
+  ];
+
+  const monthName = months[Number(month) - 1] || month;
+
+  return `${day} ${monthName} ${year}`;
+}
+
+function formatTime(time: string | null) {
+  if (!time) return "TBA";
+
+  const parts = time.split(":");
+
+  if (parts.length < 2) {
+    return time;
+  }
+
+  let hour = Number(parts[0]);
+  const minute = parts[1];
+
+  if (Number.isNaN(hour)) {
+    return time;
+  }
+
+  const suffix = hour >= 12 ? "PM" : "AM";
+  hour = hour % 12 || 12;
+
+  return `${hour}:${minute} ${suffix}`;
+}
+
+function venueText(venue: string | null) {
+  return venue?.trim() || "VENUE TBA";
+}
+
+/* ========================================================================= */
+/* PASS ARTWORK                                                             */
+/* ========================================================================= */
+
+interface PassArtworkProps {
+  guest: Guest;
+  event: EventRow;
+  qrDataUrl: string;
+}
+
+function PassArtwork({
+  guest,
+  event,
   qrDataUrl,
-  downloadPdf,
-  waLink,
-} from '../lib/pass';
-import Icon from '../components/Icon';
+}: PassArtworkProps) {
+  return (
+    <div
+      className="vyra-pass-artwork"
+      style={{
+        position: "relative",
+        width: 1024,
+        height: 1536,
+        overflow: "hidden",
+        background: "#050810",
+        color: "#ffffff",
+        fontFamily: "Arial, Helvetica, sans-serif",
+      }}
+    >
+      {/* =============================================================== */}
+      {/* BACKGROUND IMAGE                                                 */}
+      {/* =============================================================== */}
+<img
+  src={`/pass-background.jpg?v=${Date.now()}`}
+  alt=""
+  crossOrigin="anonymous"
+  style={{
+    position: "absolute",
+    inset: 0,
+    width: "100%",
+    height: "100%",
+    objectFit: "cover",
+    objectPosition: "center",
+    display: "block",
+    zIndex: 0,
+  }}
+/>
+
+      {/* =============================================================== */}
+      {/* CINEMATIC OVERLAY                                                 */}
+      {/* =============================================================== */}
+
+      <div
+        style={{
+          position: "absolute",
+          inset: 0,
+          zIndex: 1,
+          background:
+            "linear-gradient(180deg, rgba(1,5,15,.73) 0%, rgba(2,7,15,.20) 28%, rgba(0,0,0,.08) 52%, rgba(1,5,12,.30) 68%, rgba(0,2,8,.78) 100%)",
+          pointerEvents: "none",
+        }}
+      />
+
+      {/* =============================================================== */}
+      {/* SOFT CENTER GLOW                                                  */}
+      {/* =============================================================== */}
+
+      <div
+        style={{
+          position: "absolute",
+          inset: 0,
+          zIndex: 1,
+          background:
+            "radial-gradient(circle at 50% 48%, rgba(255,220,145,.10) 0%, rgba(255,220,145,0) 42%)",
+          pointerEvents: "none",
+        }}
+      />
+
+      {/* =============================================================== */}
+      {/* GOLD BORDER                                                       */}
+      {/* =============================================================== */}
+
+      <div
+        style={{
+          position: "absolute",
+          inset: 24,
+          zIndex: 2,
+          border: "2px solid rgba(241,203,117,.90)",
+          borderRadius: 28,
+          boxShadow:
+            "0 0 20px rgba(241,203,117,.18), inset 0 0 35px rgba(0,0,0,.14)",
+          pointerEvents: "none",
+        }}
+      />
+
+      {/* Decorative inner border */}
+      <div
+        style={{
+          position: "absolute",
+          inset: 37,
+          zIndex: 2,
+          border: "1px solid rgba(255,244,210,.22)",
+          borderRadius: 21,
+          pointerEvents: "none",
+        }}
+      />
+
+      {/* =============================================================== */}
+      {/* TOP BRAND                                                         */}
+      {/* =============================================================== */}
+
+      <div
+        style={{
+          position: "absolute",
+          top: 68,
+          left: 70,
+          right: 70,
+          zIndex: 4,
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+        }}
+      >
+        <div
+          style={{
+            fontSize: 15,
+            fontWeight: 600,
+            letterSpacing: 5,
+            color: "#f5d98d",
+            textShadow: "0 2px 8px rgba(0,0,0,.65)",
+          }}
+        >
+          VYRA ENTERTAINMENT
+        </div>
+
+        <div
+          style={{
+            padding: "10px 18px",
+            borderRadius: 25,
+            border: "1px solid rgba(245,213,135,.78)",
+            background: "rgba(2,7,14,.28)",
+            fontSize: 12,
+            letterSpacing: 3,
+            color: "#fff3d2",
+          }}
+        >
+          ENTRY PASS
+        </div>
+      </div>
+
+      {/* =============================================================== */}
+      {/* VYRA                                                             */}
+      {/* =============================================================== */}
+
+      <div
+        style={{
+          position: "absolute",
+          top: 138,
+          left: 50,
+          right: 50,
+          zIndex: 4,
+          textAlign: "center",
+        }}
+      >
+        <div
+          style={{
+            fontFamily: "Georgia, 'Times New Roman', serif",
+            fontSize: 86,
+            fontWeight: 500,
+            letterSpacing: 7,
+            lineHeight: 0.95,
+            color: "#fff7e5",
+            textShadow:
+              "0 3px 12px rgba(0,0,0,.65), 0 0 18px rgba(255,230,170,.18)",
+          }}
+        >
+          VYRA
+        </div>
+
+        <div
+          style={{
+            marginTop: 9,
+            fontSize: 17,
+            letterSpacing: 10,
+            color: "#ffffff",
+            textShadow: "0 2px 8px rgba(0,0,0,.55)",
+          }}
+        >
+          ENTERTAINMENT
+        </div>
+
+        <div
+          style={{
+            width: 255,
+            height: 1,
+            margin: "15px auto 11px",
+            background:
+              "linear-gradient(90deg, transparent, #f1cf7b, transparent)",
+          }}
+        />
+
+        <div
+          style={{
+            fontSize: 10,
+            letterSpacing: 6,
+            color: "#f2d27f",
+          }}
+        >
+          BEYOND THE ORDINARY
+        </div>
+      </div>
+
+      {/* =============================================================== */}
+      {/* EVENT TITLE                                                       */}
+      {/* =============================================================== */}
+
+      <div
+        style={{
+          position: "absolute",
+          top: 315,
+          left: 55,
+          right: 55,
+          zIndex: 4,
+          textAlign: "center",
+        }}
+      >
+        <div
+          style={{
+            fontSize: 15,
+            letterSpacing: 7,
+            color: "#f6e8c7",
+            textShadow: "0 2px 9px rgba(0,0,0,.65)",
+          }}
+        >
+          YOU ARE INVITED TO
+        </div>
+
+        <div
+          style={{
+            marginTop: 18,
+            fontFamily: "Georgia, 'Times New Roman', serif",
+            fontSize: 67,
+            lineHeight: 1,
+            letterSpacing: 1,
+            color: "#fff9ec",
+            textTransform: "uppercase",
+            textShadow:
+              "0 4px 17px rgba(0,0,0,.72), 0 0 10px rgba(255,226,170,.10)",
+          }}
+        >
+          {event.name || "EVENT"}
+        </div>
+
+        <div
+          style={{
+            margin: "17px auto 0",
+            width: 72,
+            height: 2,
+            background: "#f3cf78",
+            boxShadow: "0 0 12px rgba(243,207,120,.50)",
+          }}
+        />
+      </div>
+
+      {/* =============================================================== */}
+      {/* GUEST                                                             */}
+      {/* =============================================================== */}
+
+      <div
+        style={{
+          position: "absolute",
+          top: 565,
+          left: 82,
+          right: 82,
+          zIndex: 4,
+          padding: "17px 20px 21px",
+          textAlign: "center",
+          borderTop: "1px solid rgba(241,203,117,.60)",
+          borderBottom: "1px solid rgba(241,203,117,.42)",
+          background: "rgba(2,7,14,.20)",
+          borderRadius: 8,
+        }}
+      >
+        <div
+          style={{
+            fontSize: 12,
+            letterSpacing: 6,
+            color: "#f2d27f",
+          }}
+        >
+          GUEST
+        </div>
+
+        <div
+          style={{
+            marginTop: 9,
+            fontFamily: "Georgia, 'Times New Roman', serif",
+            fontSize: 49,
+            lineHeight: 1.12,
+            color: "#fff8e9",
+            textShadow: "0 3px 13px rgba(0,0,0,.65)",
+          }}
+        >
+          {guest.name}
+        </div>
+      </div>
+
+      {/* =============================================================== */}
+      {/* EVENT INFO                                                       */}
+      {/* =============================================================== */}
+
+      <div
+        style={{
+          position: "absolute",
+          left: 70,
+          right: 70,
+          top: 715,
+          zIndex: 4,
+          display: "grid",
+          gridTemplateColumns: "1fr 1.25fr 1fr",
+          overflow: "hidden",
+          border: "1px solid rgba(242,205,123,.68)",
+          borderRadius: 22,
+          background: "rgba(2,7,14,.65)",
+          boxShadow: "0 15px 32px rgba(0,0,0,.25)",
+          backdropFilter: "blur(4px)",
+        }}
+      >
+        {/* DATE */}
+        <div
+          style={{
+            minHeight: 150,
+            padding: 20,
+            display: "flex",
+            flexDirection: "column",
+            justifyContent: "center",
+            alignItems: "center",
+            textAlign: "center",
+            borderRight:
+              "1px solid rgba(242,205,123,.32)",
+          }}
+        >
+          <div
+            style={{
+              color: "#f2d27f",
+              marginBottom: 9,
+            }}
+          >
+            <Icon name="calendar" size={22} />
+          </div>
+
+          <div
+            style={{
+              fontSize: 10,
+              letterSpacing: 4,
+              color: "#f2d27f",
+            }}
+          >
+            DATE
+          </div>
+
+          <div
+            style={{
+              marginTop: 7,
+              fontFamily: "Georgia, 'Times New Roman', serif",
+              fontSize: 20,
+              lineHeight: 1.15,
+              color: "#ffffff",
+            }}
+          >
+            {formatDate(event.date)}
+          </div>
+        </div>
+
+        {/* VENUE */}
+        <div
+          style={{
+            minHeight: 150,
+            padding: 20,
+            display: "flex",
+            flexDirection: "column",
+            justifyContent: "center",
+            alignItems: "center",
+            textAlign: "center",
+            borderRight:
+              "1px solid rgba(242,205,123,.32)",
+          }}
+        >
+          <div
+            style={{
+              color: "#f2d27f",
+              marginBottom: 9,
+            }}
+          >
+            <Icon name="pin" size={22} />
+          </div>
+
+          <div
+            style={{
+              fontSize: 10,
+              letterSpacing: 4,
+              color: "#f2d27f",
+            }}
+          >
+            VENUE
+          </div>
+
+          <div
+            style={{
+              marginTop: 7,
+              maxWidth: 260,
+              fontFamily: "Georgia, 'Times New Roman', serif",
+              fontSize: 20,
+              lineHeight: 1.15,
+              color: "#ffffff",
+            }}
+          >
+            {venueText(event.venue)}
+          </div>
+        </div>
+
+        {/* TIME */}
+        <div
+          style={{
+            minHeight: 150,
+            padding: 20,
+            display: "flex",
+            flexDirection: "column",
+            justifyContent: "center",
+            alignItems: "center",
+            textAlign: "center",
+          }}
+        >
+          <div
+            style={{
+              color: "#f2d27f",
+              marginBottom: 9,
+            }}
+          >
+            <Icon name="clock" size={22} />
+          </div>
+
+          <div
+            style={{
+              fontSize: 10,
+              letterSpacing: 4,
+              color: "#f2d27f",
+            }}
+          >
+            TIME
+          </div>
+
+          <div
+            style={{
+              marginTop: 7,
+              fontFamily: "Georgia, 'Times New Roman', serif",
+              fontSize: 20,
+              color: "#ffffff",
+            }}
+          >
+            {formatTime(event.time)}
+          </div>
+        </div>
+      </div>
+
+      {/* =============================================================== */}
+      {/* QR CODE                                                          */}
+      {/* =============================================================== */}
+
+      <div
+        style={{
+          position: "absolute",
+          top: 910,
+          left: 0,
+          right: 0,
+          zIndex: 4,
+          textAlign: "center",
+        }}
+      >
+        <div
+          style={{
+            display: "inline-flex",
+            padding: 14,
+            borderRadius: 19,
+            background: "#ffffff",
+            border: "2px solid rgba(242,205,123,.95)",
+            boxShadow:
+              "0 0 24px rgba(242,205,123,.30), 0 15px 28px rgba(0,0,0,.28)",
+          }}
+        >
+          {qrDataUrl && (
+            <img
+              src={qrDataUrl}
+              alt="Entry QR"
+              style={{
+                width: 220,
+                height: 220,
+                display: "block",
+              }}
+            />
+          )}
+        </div>
+
+        <div
+          style={{
+            marginTop: 15,
+            fontSize: 12,
+            letterSpacing: 6,
+            color: "#f2d27f",
+            textShadow: "0 2px 8px rgba(0,0,0,.65)",
+          }}
+        >
+          SCAN TO ENTER
+        </div>
+      </div>
+
+      {/* =============================================================== */}
+      {/* PASS ID                                                           */}
+      {/* =============================================================== */}
+
+      <div
+        style={{
+          position: "absolute",
+          top: 1222,
+          left: 0,
+          right: 0,
+          zIndex: 4,
+          textAlign: "center",
+        }}
+      >
+        <div
+          style={{
+            display: "inline-block",
+            minWidth: 320,
+            padding: "13px 30px 15px",
+            borderRadius: 17,
+            border: "1px solid rgba(242,205,123,.78)",
+            background: "rgba(2,7,14,.70)",
+            boxShadow: "0 12px 24px rgba(0,0,0,.22)",
+          }}
+        >
+          <div
+            style={{
+              fontSize: 9,
+              letterSpacing: 5,
+              color: "#f2d27f",
+            }}
+          >
+            PASS ID
+          </div>
+
+          <div
+            style={{
+              marginTop: 6,
+              fontFamily: "Georgia, 'Times New Roman', serif",
+              fontSize: 24,
+              letterSpacing: 3,
+              color: "#fff8e9",
+            }}
+          >
+            {guest.pass_id}
+          </div>
+        </div>
+      </div>
+
+      {/* =============================================================== */}
+      {/* FOOTER                                                            */}
+      {/* =============================================================== */}
+
+      <div
+        style={{
+          position: "absolute",
+          left: 60,
+          right: 60,
+          bottom: 53,
+          zIndex: 4,
+          textAlign: "center",
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 16,
+          }}
+        >
+          <div
+            style={{
+              flex: 1,
+              maxWidth: 180,
+              height: 1,
+              background:
+                "linear-gradient(90deg, transparent, rgba(242,205,123,.75))",
+            }}
+          />
+
+          <div
+            style={{
+              fontFamily: "Georgia, 'Times New Roman', serif",
+              fontSize: 18,
+              letterSpacing: 5,
+              color: "#f2d27f",
+            }}
+          >
+            VYRA
+          </div>
+
+          <div
+            style={{
+              flex: 1,
+              maxWidth: 180,
+              height: 1,
+              background:
+                "linear-gradient(90deg, rgba(242,205,123,.75), transparent)",
+            }}
+          />
+        </div>
+
+        <div
+          style={{
+            marginTop: 8,
+            fontSize: 9,
+            letterSpacing: 6,
+            color: "#f2d27f",
+          }}
+        >
+          BEYOND THE ORDINARY
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ========================================================================= */
+/* CREATE PASS PAGE                                                         */
+/* ========================================================================= */
 
 export default function CreatePass({
   ev,
-}: {
-  ev: EventRow;
-}) {
-  const [name, setName] = useState('');
-  const [phone, setPhone] = useState('');
-  const [type, setType] = useState('Regular');
-  const [notes, setNotes] = useState('');
+  events,
+  onSelected,
+}: CreatePassProps) {
+  const [selectedEventId, setSelectedEventId] = useState(
+    ev?.id || ""
+  );
 
-  const [g, setG] = useState<Guest | null>(null);
-  const [qr, setQr] = useState('');
-  const [busy, setBusy] = useState(false);
+  const [name, setName] = useState("");
+  const [passType, setPassType] = useState("Regular");
 
-  /*
-   * Keep the existing pass categories in the system,
-   * but DO NOT display the pass type on the actual ticket design.
-   */
-  const passTypes = [
-    'Regular',
-    'Early Bird',
-    'Couple',
-    'Surge Pass',
-  ];
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
 
-  async function gen(
-    e: React.FormEvent<HTMLFormElement>
-  ) {
-    e.preventDefault();
+  const [generatedGuest, setGeneratedGuest] =
+    useState<Guest | null>(null);
 
-    if (!name.trim()) {
-      toast.error('Please enter the guest name.');
+  const [qrDataUrl, setQrDataUrl] = useState("");
+
+  const passRef = useRef<HTMLDivElement>(null);
+
+  /* --------------------------------------------------------------------- */
+  /* CURRENT EVENT                                                         */
+  /* --------------------------------------------------------------------- */
+
+  const selectedEvent = useMemo(() => {
+    return (
+      events.find(
+        (event) => event.id === selectedEventId
+      ) ||
+      ev ||
+      null
+    );
+  }, [events, selectedEventId, ev]);
+
+  useEffect(() => {
+    if (!selectedEventId && ev?.id) {
+      setSelectedEventId(ev.id);
+    }
+  }, [ev, selectedEventId]);
+
+  /* --------------------------------------------------------------------- */
+  /* SELECT EVENT                                                          */
+  /* --------------------------------------------------------------------- */
+
+  const handleEventChange = (eventId: string) => {
+    setSelectedEventId(eventId);
+
+    const selected = events.find(
+      (event) => event.id === eventId
+    );
+
+    if (selected) {
+      onSelected(selected);
+    }
+  };
+
+  /* --------------------------------------------------------------------- */
+  /* GENERATE PASS                                                         */
+  /* --------------------------------------------------------------------- */
+
+  const generatePass = async () => {
+    setError("");
+    setSuccess("");
+
+    const guestName = name.trim();
+
+    if (!guestName) {
+      setError("Enter the guest name.");
       return;
     }
 
-    setBusy(true);
-
-    for (let i = 0; i < 5; i++) {
-      const passId = newPassId();
-      const token = newToken();
-
-      const {
-        data,
-        error,
-      } = await supabase
-        .from('guests')
-        .insert({
-          event_id: ev.id,
-          name: name.trim(),
-          phone: phone.trim() || null,
-          pass_type: type,
-          notes: notes.trim() || null,
-          pass_id: passId,
-          qr_token: token,
-        })
-        .select()
-        .single();
-
-      if (!error) {
-        setG(data);
-        setQr(await qrDataUrl(data.qr_token));
-
-        setBusy(false);
-
-        toast.success(
-          'Pass generated successfully.'
-        );
-
-        return;
-      }
-
-      console.error(
-        'Create pass error:',
-        error
-      );
-
-      if (error.code !== '23505') {
-        setBusy(false);
-
-        toast.error(
-          error.message ||
-            'Could not save the pass.'
-        );
-
-        return;
-      }
+    if (!selectedEvent) {
+      setError("Select an event.");
+      return;
     }
 
-    setBusy(false);
-
-    toast.error(
-      'Could not create a unique pass. Please retry.'
-    );
-  }
-
-  async function pdf() {
-    if (!g) return;
+    setLoading(true);
 
     try {
-      await downloadPdf(g, ev);
-    } catch (error) {
-      console.error(
-        'PDF error:',
-        error
-      );
+      const passId = makePassId();
+      const qrToken = makeQrToken();
 
-      toast.error(
-        'PDF could not be generated.'
-      );
-    }
-  }
+      /* Create guest in Supabase */
+      const { data, error: insertError } = await supabase
+        .from("guests")
+        .insert({
+          event_id: selectedEvent.id,
+          name: guestName,
+          phone: null,
+          pass_type: passType,
+          pass_id: passId,
+          qr_token: qrToken,
+          status: "valid",
+          notes: null,
+        })
+        .select("*")
+        .single();
 
-  async function revoke() {
-    if (!g) return;
-
-    const confirmed =
-      window.confirm(
-        `Revoke ${g.name}'s pass?\n\nThis pass will no longer be valid at the entrance.`
-      );
-
-    if (!confirmed) return;
-
-    const {
-      data,
-      error,
-    } = await supabase
-      .from('guests')
-      .update({
-        status: 'revoked',
-      })
-      .eq('id', g.id)
-      .select('id,status')
-      .maybeSingle();
-
-    if (error) {
-      console.error(
-        'Revoke error:',
-        error
-      );
-
-      toast.error(
-        error.message ||
-          'Could not revoke the pass.'
-      );
-
-      return;
-    }
-
-    if (!data) {
-      toast.error(
-        'Pass was not updated.'
-      );
-
-      return;
-    }
-
-    setG({
-      ...g,
-      status: 'revoked',
-    });
-
-    toast.success(
-      'Pass revoked successfully.'
-    );
-  }
-
-  /*
-   * Converts the database date into a clean display.
-   * Example:
-   * 2026-10-05 → 05 OCT 2026
-   */
-  function formatDate(
-    value?: string | null
-  ) {
-    if (!value) return '—';
-
-    const date = new Date(
-      `${value}T00:00:00`
-    );
-
-    if (
-      Number.isNaN(
-        date.getTime()
-      )
-    ) {
-      return value;
-    }
-
-    return date
-      .toLocaleDateString(
-        'en-IN',
-        {
-          day: '2-digit',
-          month: 'short',
-          year: 'numeric',
-        }
-      )
-      .toUpperCase();
-  }
-
-  /*
-   * Converts the database time into:
-   * 18:30 → 6:30 PM
-   */
-  function formatTime(
-    value?: string | null
-  ) {
-    if (!value) return '—';
-
-    const [hours, minutes] =
-      value.split(':');
-
-    const h = Number(hours);
-    const m = Number(minutes);
-
-    if (
-      Number.isNaN(h) ||
-      Number.isNaN(m)
-    ) {
-      return value;
-    }
-
-    const date = new Date();
-
-    date.setHours(
-      h,
-      m,
-      0,
-      0
-    );
-
-    return date.toLocaleTimeString(
-      'en-IN',
-      {
-        hour: 'numeric',
-        minute: '2-digit',
+      if (insertError) {
+        throw new Error(insertError.message);
       }
-    );
-  }
 
-  const field =
-    'w-full rounded-2xl px-4 py-3.5';
+      const guest = data as Guest;
+
+      /* Generate real QR */
+      const qr = await QRCode.toDataURL(qrToken, {
+        width: 500,
+        margin: 2,
+        errorCorrectionLevel: "H",
+        color: {
+          dark: "#111111",
+          light: "#ffffff",
+        },
+      });
+
+      setGeneratedGuest(guest);
+      setQrDataUrl(qr);
+      setSuccess(`Pass created for ${guestName}.`);
+
+      setName("");
+
+      /*
+       * Wait for React to render the pass before taking
+       * the screenshot for the PDF.
+       */
+      await new Promise<void>((resolve) => {
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            resolve();
+          });
+        });
+      });
+
+      await downloadPdf(guest, qr);
+    } catch (err) {
+      const message =
+        err instanceof Error
+          ? err.message
+          : "Failed to create pass.";
+
+      setError(message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  /* --------------------------------------------------------------------- */
+  /* DOWNLOAD PDF                                                          */
+  /* --------------------------------------------------------------------- */
+
+  const downloadPdf = async (
+    guest: Guest = generatedGuest as Guest,
+    qr: string = qrDataUrl
+  ) => {
+    if (!guest || !selectedEvent) {
+      return;
+    }
+
+    let element = passRef.current;
+
+    if (!element) {
+      await new Promise<void>((resolve) => {
+        requestAnimationFrame(() => resolve());
+      });
+
+      element = passRef.current;
+    }
+
+    if (!element) {
+      setError("Pass preview could not be prepared.");
+      return;
+    }
+
+    try {
+      const canvas = await html2canvas(element, {
+        width: 1024,
+        height: 1536,
+        scale: 2,
+        useCORS: true,
+        allowTaint: false,
+        backgroundColor: "#050810",
+        logging: false,
+      });
+
+      const image = canvas.toDataURL(
+        "image/jpeg",
+        0.96
+      );
+
+      const pdf = new jsPDF({
+        orientation: "portrait",
+        unit: "pt",
+        format: [288, 432],
+        compress: true,
+      });
+
+      pdf.addImage(
+        image,
+        "JPEG",
+        0,
+        0,
+        288,
+        432,
+        undefined,
+        "FAST"
+      );
+
+      const safeName = guest.name
+        .replace(/[^a-z0-9]+/gi, "-")
+        .replace(/^-|-$/g, "");
+
+      pdf.save(
+        `${guest.pass_id}-${safeName}.pdf`
+      );
+    } catch (err) {
+      const message =
+        err instanceof Error
+          ? err.message
+          : "Could not create the PDF.";
+
+      setError(message);
+    }
+  };
+
+  /* ========================================================================= */
+  /* UI                                                                        */
+  /* ========================================================================= */
 
   return (
-    <div className="page-in grid gap-6 xl:grid-cols-[.78fr_1.22fr]">
-
-      {/* ==============================
-          LEFT — CREATE FORM
-      ============================== */}
-
-      <section className="glass rounded-[28px] p-5 md:p-7">
-
-        <div className="mb-7 flex items-start justify-between">
-
-          <div>
-            <p className="text-[10px] uppercase tracking-[.34em] text-amber-200/60">
-              Guest access
-            </p>
-
-            <h2 className="font-display mt-2 text-4xl">
-              Create Pass
-            </h2>
-
-            <p className="mt-2 text-sm text-zinc-500">
-              Create a unique entry pass for your guest.
-            </p>
+    <div style={{ paddingBottom: 45 }}>
+      {/* HEADER */}
+      <div
+        style={{
+          marginBottom: 24,
+          display: "flex",
+          alignItems: "flex-end",
+          justifyContent: "space-between",
+          gap: 20,
+          flexWrap: "wrap",
+        }}
+      >
+        <div>
+          <div
+            style={{
+              marginBottom: 6,
+              fontSize: 11,
+              color: "var(--text3)",
+              letterSpacing: 3,
+              textTransform: "uppercase",
+            }}
+          >
+            VYRA ENTERTAINMENT
           </div>
 
-          <div className="rounded-2xl border border-amber-300/15 bg-amber-300/[.04] p-3 text-amber-200">
-            <Icon
-              name="ticket"
-              size={21}
-            />
-          </div>
+          <h1
+            style={{
+              margin: 0,
+              fontFamily:
+                "Georgia, 'Times New Roman', serif",
+              fontWeight: 500,
+              fontSize: 34,
+            }}
+          >
+            Create Guest Pass
+          </h1>
 
+          <div
+            style={{
+              marginTop: 7,
+              fontSize: 13,
+              color: "var(--text2)",
+            }}
+          >
+            Generate a unique luxury entry pass.
+          </div>
         </div>
+      </div>
 
-        <form
-          onSubmit={gen}
-          className="space-y-4"
+      {/* FORM CARD */}
+      <div
+        className="card"
+        style={{
+          padding: 22,
+          marginBottom: 24,
+        }}
+      >
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns:
+              "minmax(220px, 1.35fr) minmax(180px, 1fr) minmax(180px, 1fr)",
+            gap: 16,
+          }}
         >
+          {/* EVENT */}
+          <div>
+            <label
+              style={{
+                display: "block",
+                marginBottom: 8,
+                fontSize: 11,
+                color: "var(--text3)",
+                letterSpacing: 1.2,
+                textTransform: "uppercase",
+              }}
+            >
+              Event
+            </label>
+
+            <select
+              value={selectedEventId}
+              onChange={(e) =>
+                handleEventChange(e.target.value)
+              }
+              style={{
+                width: "100%",
+                boxSizing: "border-box",
+                padding: "13px 14px",
+                borderRadius: 10,
+                border: "1px solid var(--hair)",
+                background: "var(--panel2)",
+                color: "var(--text)",
+                outline: "none",
+              }}
+            >
+              <option value="">
+                Select event
+              </option>
+
+              {events.map((event) => (
+                <option
+                  key={event.id}
+                  value={event.id}
+                >
+                  {event.name}
+                </option>
+              ))}
+            </select>
+          </div>
 
           {/* GUEST NAME */}
-
           <div>
-            <label className="mb-2 block text-[10px] uppercase tracking-[.22em] text-zinc-500">
-              Guest name *
+            <label
+              style={{
+                display: "block",
+                marginBottom: 8,
+                fontSize: 11,
+                color: "var(--text3)",
+                letterSpacing: 1.2,
+                textTransform: "uppercase",
+              }}
+            >
+              Guest Name
             </label>
 
             <input
-              className={field}
-              type="text"
-              placeholder="e.g. Rahul Sharma"
               value={name}
               onChange={(e) =>
                 setName(e.target.value)
               }
-            />
-          </div>
-
-          {/* PHONE */}
-
-          <div>
-            <label className="mb-2 block text-[10px] uppercase tracking-[.22em] text-zinc-500">
-              Phone
-            </label>
-
-            <input
-              className={field}
-              type="text"
-              placeholder="+91 98765 43210"
-              value={phone}
-              onChange={(e) =>
-                setPhone(e.target.value)
-              }
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  generatePass();
+                }
+              }}
+              placeholder="Enter guest name"
+              style={{
+                width: "100%",
+                boxSizing: "border-box",
+                padding: "13px 14px",
+                borderRadius: 10,
+                border: "1px solid var(--hair)",
+                background: "var(--panel2)",
+                color: "var(--text)",
+                outline: "none",
+              }}
             />
           </div>
 
           {/* PASS CATEGORY */}
-
           <div>
-            <label className="mb-2 block text-[10px] uppercase tracking-[.22em] text-zinc-500">
-              Pass category
+            <label
+              style={{
+                display: "block",
+                marginBottom: 8,
+                fontSize: 11,
+                color: "var(--text3)",
+                letterSpacing: 1.2,
+                textTransform: "uppercase",
+              }}
+            >
+              Pass Category
             </label>
 
             <select
-              className={field}
-              value={type}
+              value={passType}
               onChange={(e) =>
-                setType(
-                  e.target.value
-                )
+                setPassType(e.target.value)
               }
+              style={{
+                width: "100%",
+                boxSizing: "border-box",
+                padding: "13px 14px",
+                borderRadius: 10,
+                border: "1px solid var(--hair)",
+                background: "var(--panel2)",
+                color: "var(--text)",
+                outline: "none",
+              }}
             >
-              {passTypes.map(
-                (passType) => (
-                  <option
-                    key={passType}
-                    value={passType}
-                  >
-                    {passType}
-                  </option>
-                )
-              )}
+              {PASS_TYPES.map((type) => (
+                <option
+                  key={type}
+                  value={type}
+                >
+                  {type}
+                </option>
+              ))}
             </select>
           </div>
-
-          {/* NOTES */}
-
-          <div>
-            <label className="mb-2 block text-[10px] uppercase tracking-[.22em] text-zinc-500">
-              Notes
-            </label>
-
-            <textarea
-              rows={4}
-              className={field}
-              placeholder="Optional notes"
-              value={notes}
-              onChange={(e) =>
-                setNotes(
-                  e.target.value
-                )
-              }
-            />
-          </div>
-
-          {/* BUTTON */}
-
-          <button
-            type="submit"
-            disabled={busy}
-            className="flex w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-amber-500 to-amber-300 px-4 py-4 font-semibold text-black shadow-[0_12px_34px_rgba(222,171,86,.14)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {busy
-              ? 'GENERATING…'
-              : 'GENERATE PASS'}
-
-            <Icon
-              name="chevron"
-              size={18}
-            />
-          </button>
-
-        </form>
-      </section>
-
-
-      {/* ==============================
-          RIGHT — PASS PREVIEW
-      ============================== */}
-
-      <section className="glass rounded-[28px] p-5 md:p-7">
-
-        <div className="mb-7">
-
-          <p className="text-[10px] uppercase tracking-[.34em] text-amber-200/60">
-            Live preview
-          </p>
-
-          <h2 className="font-display mt-2 text-4xl">
-            Your Guest Pass
-          </h2>
-
         </div>
 
-        {!g ? (
-
-          <div className="grid min-h-[650px] place-items-center rounded-[25px] border border-dashed border-white/[.08] bg-black/10 p-8 text-center">
+        {/* SELECTED EVENT DETAILS */}
+        {selectedEvent && (
+          <div
+            style={{
+              marginTop: 18,
+              padding: 14,
+              display: "flex",
+              gap: 22,
+              flexWrap: "wrap",
+              borderRadius: 12,
+              border: "1px solid var(--hair)",
+              background:
+                "rgba(255,255,255,.025)",
+              fontSize: 12,
+            }}
+          >
+            <div>
+              <span style={{ color: "var(--text3)" }}>
+                EVENT{" "}
+              </span>
+              <strong>
+                {selectedEvent.name}
+              </strong>
+            </div>
 
             <div>
-
-              <div className="mx-auto mb-5 grid h-16 w-16 place-items-center rounded-2xl border border-white/[.08] bg-white/[.025] text-zinc-500">
-
-                <Icon
-                  name="spark"
-                  size={26}
-                />
-
-              </div>
-
-              <p className="text-lg text-zinc-300">
-                Pass preview appears here
-              </p>
-
-              <p className="mt-2 max-w-xs text-sm text-zinc-600">
-                Generate a pass to see the final guest ticket.
-              </p>
-
+              <span style={{ color: "var(--text3)" }}>
+                DATE{" "}
+              </span>
+              <strong>
+                {formatDate(selectedEvent.date)}
+              </strong>
             </div>
 
+            <div>
+              <span style={{ color: "var(--text3)" }}>
+                TIME{" "}
+              </span>
+              <strong>
+                {formatTime(selectedEvent.time)}
+              </strong>
+            </div>
+
+            <div>
+              <span style={{ color: "var(--text3)" }}>
+                VENUE{" "}
+              </span>
+              <strong>
+                {venueText(selectedEvent.venue)}
+              </strong>
+            </div>
           </div>
-
-        ) : (
-
-          <div className="space-y-4">
-
-            {/* =================================
-                ACTUAL DIGITAL PASS
-            ================================= */}
-
-            <div className="ticket-card relative mx-auto max-w-[490px] overflow-hidden rounded-[30px] border border-amber-200/20 bg-[radial-gradient(circle_at_50%_0%,rgba(195,143,58,.13),transparent_35%),linear-gradient(180deg,#0b0906,#020304_65%,#080a0d)] p-6 shadow-[0_30px_100px_rgba(0,0,0,.6)] sm:p-8">
-
-              {/* TOP GOLD LINE */}
-
-              <div className="absolute left-8 right-8 top-0 h-px bg-gradient-to-r from-transparent via-amber-300/80 to-transparent" />
-
-              {/* TOP */}
-
-              <div className="relative z-10 flex items-start justify-between gap-4">
-
-                <div>
-
-                  <img
-                    src="/vyra-logo.jpg"
-                    alt="VYRA Entertainment"
-                    className="h-12 w-auto max-w-[170px] object-contain mix-blend-screen"
-                  />
-
-                  <p className="mt-1 text-[8px] uppercase tracking-[.35em] text-amber-200/55">
-                    Beyond the ordinary
-                  </p>
-                </div>
-
-                <div className="rounded-full border border-amber-300/20 bg-amber-300/[.04] px-3 py-1.5 text-[8px] uppercase tracking-[.25em] text-amber-200">
-                  Entry Pass
-                </div>
-
-              </div>
-
-
-              {/* DECORATIVE ORBIT */}
-
-              <div className="pointer-events-none absolute left-1/2 top-[120px] h-28 w-64 -translate-x-1/2 rotate-[-8deg] rounded-[50%] border border-amber-200/[.08]" />
-
-              <div className="pointer-events-none absolute left-1/2 top-[124px] h-20 w-52 -translate-x-1/2 rotate-[8deg] rounded-[50%] border border-blue-200/[.06]" />
-
-
-              {/* EVENT NAME */}
-
-              <div className="relative z-10 mt-14 text-center">
-
-                <p className="text-[9px] uppercase tracking-[.38em] text-zinc-600">
-                  You are invited to
-                </p>
-
-                <h3 className="font-display mt-2 text-4xl leading-none text-white sm:text-5xl">
-                  {ev.name}
-                </h3>
-
-              </div>
-
-
-              {/* GUEST */}
-
-              <div className="relative z-10 mt-10">
-
-                <p className="text-[9px] uppercase tracking-[.28em] text-amber-200/55">
-                  Guest
-                </p>
-
-                <p className="font-display mt-1 break-words text-4xl leading-none text-zinc-100 sm:text-5xl">
-                  {g.name}
-                </p>
-
-              </div>
-
-
-              {/* DIVIDER */}
-
-              <div className="relative z-10 my-7 flex items-center gap-3">
-
-                <span className="h-px flex-1 bg-gradient-to-r from-transparent to-amber-200/30" />
-
-                <span className="h-1 w-1 rotate-45 bg-amber-200/60" />
-
-                <span className="h-px flex-1 bg-gradient-to-l from-transparent to-amber-200/30" />
-
-              </div>
-
-
-              {/* EVENT DETAILS */}
-
-              <div className="relative z-10 grid grid-cols-3 gap-3">
-
-                {/* DATE */}
-
-                <div className="rounded-2xl border border-white/[.06] bg-white/[.018] p-3">
-
-                  <div className="mb-2 text-amber-200/75">
-                    <Icon
-                      name="calendar"
-                      size={17}
-                    />
-                  </div>
-
-                  <p className="text-[8px] uppercase tracking-[.18em] text-zinc-600">
-                    Date
-                  </p>
-
-                  <p className="mt-1 text-xs font-medium leading-tight text-zinc-200">
-                    {formatDate(
-                      ev.date
-                    )}
-                  </p>
-
-                </div>
-
-
-                {/* VENUE */}
-
-                <div className="rounded-2xl border border-white/[.06] bg-white/[.018] p-3">
-
-                  <div className="mb-2 text-amber-200/75">
-                    <Icon
-                      name="pin"
-                      size={17}
-                    />
-                  </div>
-
-                  <p className="text-[8px] uppercase tracking-[.18em] text-zinc-600">
-                    Venue
-                  </p>
-
-                  <p className="mt-1 break-words text-xs font-medium leading-tight text-zinc-200">
-                    {ev.venue || '—'}
-                  </p>
-
-                </div>
-
-
-                {/* TIME */}
-
-                <div className="rounded-2xl border border-white/[.06] bg-white/[.018] p-3">
-
-                  <div className="mb-2 text-amber-200/75">
-                    <Icon
-                      name="clock"
-                      size={17}
-                    />
-                  </div>
-
-                  <p className="text-[8px] uppercase tracking-[.18em] text-zinc-600">
-                    Time
-                  </p>
-
-                  <p className="mt-1 text-xs font-medium leading-tight text-zinc-200">
-                    {formatTime(
-                      ev.time
-                    )}
-                  </p>
-
-                </div>
-
-              </div>
-
-
-              {/* QR AREA */}
-
-              <div className="relative z-10 mt-7 rounded-3xl border border-amber-200/15 bg-black/35 p-5">
-
-                <div className="grid place-items-center">
-
-                  <div className="rounded-[22px] border border-amber-300/40 bg-white p-3 shadow-[0_0_45px_rgba(222,171,86,.13)]">
-
-                    <img
-                      src={qr}
-                      alt="Guest QR code"
-                      className="w-44 sm:w-48"
-                    />
-
-                  </div>
-
-                  <p className="mt-4 text-[9px] uppercase tracking-[.4em] text-amber-200/65">
-                    Scan to enter
-                  </p>
-
-                </div>
-
-              </div>
-
-
-              {/* PASS ID */}
-
-              <div className="relative z-10 mt-6 flex items-end justify-between gap-5">
-
-                <div>
-
-                  <p className="text-[8px] uppercase tracking-[.28em] text-zinc-600">
-                    Pass ID
-                  </p>
-
-                  <p className="mt-1 font-mono text-xs tracking-wider text-zinc-200 sm:text-sm">
-                    {g.pass_id}
-                  </p>
-
-                </div>
-
-                <p className="font-display text-lg text-amber-100/45">
-                  VYRA
-                </p>
-
-              </div>
-
-
-              {/* TAGLINE */}
-
-              <div className="relative z-10 mt-8 border-t border-white/[.06] pt-5 text-center">
-
-                <p className="text-[9px] uppercase tracking-[.42em] text-amber-200/65">
-                  Beyond the ordinary
-                </p>
-
-              </div>
-
-
-              {/* BOTTOM GLOW */}
-
-              <div className="pointer-events-none absolute bottom-[-100px] left-1/2 h-48 w-72 -translate-x-1/2 rounded-full bg-amber-400/[.07] blur-[80px]" />
-
-            </div>
-
-
-            {/* ACTIONS */}
-
-            <div className="flex flex-wrap justify-center gap-2">
-
-              <button
-                onClick={pdf}
-                className="action-btn"
-              >
-                <Icon
-                  name="download"
-                  size={16}
-                />
-                PDF
-              </button>
-
-              <a
-                href={waLink(g, ev)}
-                target="_blank"
-                rel="noreferrer"
-                className="action-btn"
-              >
-                <Icon
-                  name="whatsapp"
-                  size={16}
-                />
-                WhatsApp
-              </a>
-
-              <button
-                onClick={() =>
-                  navigator.clipboard
-                    .writeText(
-                      g.pass_id
-                    )
-                    .then(() =>
-                      toast.success(
-                        'Pass ID copied.'
-                      )
-                    )
-                    .catch(() =>
-                      toast.error(
-                        'Could not copy ID.'
-                      )
-                    )
-                }
-                className="action-btn"
-              >
-                <Icon
-                  name="copy"
-                  size={16}
-                />
-                Copy ID
-              </button>
-
-              {g.status !==
-                'revoked' && (
-                <button
-                  onClick={revoke}
-                  className="action-btn danger"
-                >
-                  Revoke
-                </button>
-              )}
-
-            </div>
-
-            <p className="text-center text-[11px] text-zinc-600">
-              Download the PDF and send it to your guest.
-            </p>
-
-          </div>
-
         )}
 
-      </section>
+        {/* GENERATE BUTTON */}
+        <div
+          style={{
+            marginTop: 20,
+            display: "flex",
+            justifyContent: "flex-end",
+          }}
+        >
+          <button
+            className="btn btn-primary"
+            onClick={generatePass}
+            disabled={loading}
+            style={{
+              minWidth: 190,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 9,
+            }}
+          >
+            {loading
+              ? "Generating..."
+              : "Generate Pass"}
+          </button>
+        </div>
 
+        {/* ERROR */}
+        {error && (
+          <div
+            style={{
+              marginTop: 14,
+              padding: 12,
+              borderRadius: 10,
+              border:
+                "1px solid rgba(239,68,68,.25)",
+              background:
+                "rgba(239,68,68,.08)",
+              color: "#ffabab",
+              fontSize: 12,
+            }}
+          >
+            {error}
+          </div>
+        )}
+
+        {/* SUCCESS */}
+        {success && (
+          <div
+            style={{
+              marginTop: 14,
+              padding: 12,
+              borderRadius: 10,
+              border:
+                "1px solid rgba(34,197,94,.18)",
+              background:
+                "rgba(34,197,94,.07)",
+              color: "#94f5ad",
+              fontSize: 12,
+            }}
+          >
+            {success}
+          </div>
+        )}
+      </div>
+
+      {/* ================================================================= */
+      /* GENERATED PASS                                                    */
+      /* ================================================================= */}
+
+      {generatedGuest && selectedEvent && (
+        <div
+          className="card"
+          style={{
+            padding: 24,
+            textAlign: "center",
+          }}
+        >
+          {/* PREVIEW HEADER */}
+          <div
+            style={{
+              marginBottom: 20,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 20,
+              flexWrap: "wrap",
+            }}
+          >
+            <div
+              style={{
+                textAlign: "left",
+              }}
+            >
+              <div
+                style={{
+                  fontSize: 10,
+                  color: "var(--text3)",
+                  letterSpacing: 2,
+                  textTransform: "uppercase",
+                }}
+              >
+                Generated Pass
+              </div>
+
+              <div
+                style={{
+                  marginTop: 5,
+                  fontSize: 15,
+                  fontWeight: 700,
+                }}
+              >
+                {generatedGuest.name}
+              </div>
+
+              <div
+                style={{
+                  marginTop: 4,
+                  fontSize: 12,
+                  color: "var(--text3)",
+                }}
+              >
+                {generatedGuest.pass_id}
+              </div>
+            </div>
+
+            <button
+              className="btn"
+              onClick={() =>
+                downloadPdf(
+                  generatedGuest,
+                  qrDataUrl
+                )
+              }
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+              }}
+            >
+              <Icon
+                name="download"
+                size={15}
+              />
+              Download PDF
+            </button>
+          </div>
+
+          {/* PASS PREVIEW */}
+          <div
+            style={{
+              width: "100%",
+              overflow: "auto",
+              display: "flex",
+              justifyContent: "center",
+              paddingBottom: 15,
+            }}
+          >
+            <div
+              style={{
+                width: 430,
+                height: 645,
+                overflow: "hidden",
+                borderRadius: 18,
+                boxShadow:
+                  "0 25px 75px rgba(0,0,0,.48), 0 0 35px rgba(230,190,92,.10)",
+              }}
+            >
+              <div
+                style={{
+                  width: 1024,
+                  height: 1536,
+                  transform:
+                    "scale(0.419921875)",
+                  transformOrigin:
+                    "top left",
+                }}
+              >
+                <PassArtwork
+                  guest={generatedGuest}
+                  event={selectedEvent}
+                  qrDataUrl={qrDataUrl}
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ================================================================= */
+      /* HIDDEN FULL-SIZE PASS USED FOR PDF                                */
+      /* ================================================================= */}
+
+      <div
+        style={{
+          position: "fixed",
+          left: "-10000px",
+          top: 0,
+          width: 1024,
+          height: 1536,
+          overflow: "hidden",
+          pointerEvents: "none",
+          opacity: 1,
+        }}
+      >
+        <div ref={passRef}>
+          {generatedGuest &&
+            selectedEvent && (
+              <PassArtwork
+                guest={generatedGuest}
+                event={selectedEvent}
+                qrDataUrl={qrDataUrl}
+              />
+            )}
+        </div>
+      </div>
     </div>
   );
 }

@@ -1,4 +1,8 @@
-import { useEffect, useState } from 'react';
+import {
+  useEffect,
+  useState,
+} from 'react';
+
 import {
   NavLink,
   Navigate,
@@ -6,7 +10,10 @@ import {
   Routes,
   useLocation,
 } from 'react-router-dom';
-import type { Session } from '@supabase/supabase-js';
+
+import type {
+  Session,
+} from '@supabase/supabase-js';
 
 import {
   supabase,
@@ -23,16 +30,36 @@ import Scanner from './pages/Scanner';
 import VyraBackground from './components/VyraBackground';
 import Icon from './components/Icon';
 
-const nav = [
-  ['/', 'dashboard', 'Dashboard'],
-  ['/create', 'ticket', 'Create Pass'],
-  ['/guests', 'users', 'Guests'],
-  ['/scanner', 'scanner', 'Scanner'],
-  ['/settings', 'settings', 'Event Settings'],
-] as const;
-
 const SELECTED_EVENT_KEY =
   'partypass:selected-event';
+
+const nav = [
+  {
+    to: '/',
+    icon: 'dashboard',
+    label: 'Dashboard',
+  },
+  {
+    to: '/create',
+    icon: 'ticket',
+    label: 'Create Pass',
+  },
+  {
+    to: '/guests',
+    icon: 'users',
+    label: 'Guests',
+  },
+  {
+    to: '/scanner',
+    icon: 'scanner',
+    label: 'Scanner',
+  },
+  {
+    to: '/settings',
+    icon: 'settings',
+    label: 'Event Settings',
+  },
+] as const;
 
 function Shell({
   ev,
@@ -45,20 +72,29 @@ function Shell({
   ev: EventRow;
   events: EventRow[];
   onSignOut: () => void;
-  onSaved: (event: EventRow) => void;
-  onSelected: (event: EventRow) => void;
+  onSaved: (
+    event: EventRow
+  ) => void;
+  onSelected: (
+    event: EventRow
+  ) => void;
   online: boolean;
 }) {
-  const location = useLocation();
+
+  const location =
+    useLocation();
 
   const pageTitle =
     location.pathname === '/'
       ? 'Dashboard'
-      : location.pathname === '/create'
+      : location.pathname ===
+          '/create'
         ? 'Create Pass'
-        : location.pathname === '/guests'
+        : location.pathname ===
+            '/guests'
           ? 'Guests'
-          : location.pathname === '/scanner'
+          : location.pathname ===
+              '/scanner'
             ? 'Scanner'
             : 'Event Settings';
 
@@ -74,7 +110,7 @@ function Shell({
           <img
             src="/vyra-logo.jpg"
             alt="VYRA Entertainment"
-            className="mx-auto mb-7 w-full max-w-[205px] mix-blend-screen opacity-95"
+            className="mx-auto mb-7 w-full max-w-[205px] mix-blend-screen"
           />
 
           <div className="mb-7 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent" />
@@ -92,27 +128,31 @@ function Shell({
         <nav className="flex flex-1 items-center justify-around gap-1 lg:flex-col lg:items-stretch lg:justify-start lg:gap-2">
 
           {nav.map(
-            ([to, icon, label]) => (
+            (item) => (
               <NavLink
-                key={to}
-                to={to}
-                end={to === '/'}
-                className={({ isActive }) =>
+                key={item.to}
+                to={item.to}
+                end={
+                  item.to === '/'
+                }
+                className={({
+                  isActive,
+                }) =>
                   `nav-item group flex items-center justify-center gap-3 rounded-2xl border px-3 py-3 text-xs transition md:px-4 md:py-3.5 lg:justify-start lg:text-sm ${
                     isActive
-                      ? 'active border-amber-300/30 bg-amber-300/[.045] text-amber-100 shadow-[0_0_26px_rgba(222,171,86,.08)]'
+                      ? 'active border-amber-300/30 bg-amber-300/[.045] text-amber-100'
                       : 'border-transparent text-zinc-400 hover:border-white/[.08] hover:bg-white/[.02] hover:text-zinc-100'
                   }`
                 }
               >
 
                 <Icon
-                  name={icon}
+                  name={item.icon}
                   size={19}
                 />
 
                 <span className="hidden sm:inline">
-                  {label}
+                  {item.label}
                 </span>
 
               </NavLink>
@@ -142,7 +182,9 @@ function Shell({
             </span>
 
             <button
-              onClick={onSignOut}
+              onClick={
+                onSignOut
+              }
               className="flex items-center gap-2 text-zinc-500 hover:text-zinc-200"
             >
 
@@ -164,7 +206,9 @@ function Shell({
         </div>
 
         <button
-          onClick={onSignOut}
+          onClick={
+            onSignOut
+          }
           className="rounded-xl px-3 py-3 text-zinc-500 lg:hidden"
           aria-label="Sign out"
         >
@@ -176,6 +220,7 @@ function Shell({
 
       </aside>
 
+
       {/* MAIN */}
 
       <main className="min-w-0 flex-1 pb-24 lg:pb-0">
@@ -184,7 +229,7 @@ function Shell({
 
           {/* TOP BAR */}
 
-          <div className="mb-7 flex flex-col gap-4 border-b border-white/[.07] pb-4 sm:flex-row sm:items-center sm:justify-between">
+          <header className="mb-7 flex flex-col gap-4 border-b border-white/[.07] pb-4 sm:flex-row sm:items-center sm:justify-between">
 
             <div>
 
@@ -193,16 +238,13 @@ function Shell({
               </p>
 
               <p className="mt-1 text-xs text-zinc-600">
-                Active event · {ev.name}
+                Active event ·{' '}
+                {ev.name}
               </p>
 
             </div>
 
             <div className="flex items-center gap-2">
-
-              <label className="hidden text-[9px] uppercase tracking-[.2em] text-zinc-700 sm:block">
-                Event
-              </label>
 
               <select
                 value={ev.id}
@@ -215,14 +257,16 @@ function Shell({
                         e.target.value
                     );
 
-                  if (selected) {
+                  if (
+                    selected
+                  ) {
                     onSelected(
                       selected
                     );
                   }
 
                 }}
-                className="w-auto min-w-[180px] rounded-full px-3 py-2 text-xs"
+                className="w-auto min-w-[180px] rounded-full px-4 py-2 text-xs"
               >
 
                 {events.map(
@@ -238,7 +282,7 @@ function Shell({
 
               </select>
 
-              <div className="flex items-center gap-2 rounded-full border border-white/[.08] bg-black/20 px-3 py-2 text-xs text-zinc-400">
+              <div className="hidden items-center gap-2 rounded-full border border-white/[.08] bg-black/20 px-3 py-2 text-xs text-zinc-400 sm:flex">
 
                 <span
                   className={`h-1.5 w-1.5 rounded-full ${
@@ -256,7 +300,10 @@ function Shell({
 
             </div>
 
-          </div>
+          </header>
+
+
+          {/* ROUTES */}
 
           <Routes>
 
@@ -274,6 +321,10 @@ function Shell({
               element={
                 <CreatePass
                   ev={ev}
+                  events={events}
+                  onSelected={
+                    onSelected
+                  }
                 />
               }
             />
@@ -302,7 +353,9 @@ function Shell({
                 <Settings
                   ev={ev}
                   events={events}
-                  onSaved={onSaved}
+                  onSaved={
+                    onSaved
+                  }
                   onSelected={
                     onSelected
                   }
@@ -332,46 +385,101 @@ function Shell({
 
 export default function App() {
 
-  const [session, setSession] =
+  const [
+    session,
+    setSession,
+  ] =
     useState<Session | null>(
       null
     );
 
-  const [ready, setReady] =
-    useState(false);
+  const [
+    authLoading,
+    setAuthLoading,
+  ] =
+    useState(true);
 
-  const [events, setEvents] =
-    useState<EventRow[]>([]);
+  const [
+    eventsLoading,
+    setEventsLoading,
+  ] =
+    useState(true);
 
-  const [ev, setEv] =
+  const [
+    events,
+    setEvents,
+  ] =
+    useState<EventRow[]>(
+      []
+    );
+
+  const [
+    ev,
+    setEv,
+  ] =
     useState<EventRow | null>(
       null
     );
 
-  const [online, setOnline] =
+  const [
+    loadError,
+    setLoadError,
+  ] =
+    useState<string | null>(
+      null
+    );
+
+  const [
+    online,
+    setOnline,
+  ] =
     useState(
       navigator.onLine
     );
+
+
+  /* AUTH */
 
   useEffect(() => {
 
     supabase.auth
       .getSession()
-      .then(({ data }) => {
+      .then(
+        ({ data }) => {
 
-        setSession(
-          data.session
-        );
+          setSession(
+            data.session
+          );
 
-        setReady(true);
+          setAuthLoading(
+            false
+          );
 
-      });
+        }
+      )
+      .catch(
+        (error) => {
+
+          console.error(
+            'Session error:',
+            error
+          );
+
+          setAuthLoading(
+            false
+          );
+
+        }
+      );
 
     const {
       data,
     } =
       supabase.auth.onAuthStateChange(
-        (_, nextSession) => {
+        (
+          _,
+          nextSession
+        ) => {
 
           setSession(
             nextSession
@@ -380,22 +488,26 @@ export default function App() {
         }
       );
 
-    const onlineHandler =
+    const handleOnline =
       () =>
-        setOnline(true);
+        setOnline(
+          true
+        );
 
-    const offlineHandler =
+    const handleOffline =
       () =>
-        setOnline(false);
+        setOnline(
+          false
+        );
 
     window.addEventListener(
       'online',
-      onlineHandler
+      handleOnline
     );
 
     window.addEventListener(
       'offline',
-      offlineHandler
+      handleOffline
     );
 
     return () => {
@@ -404,17 +516,20 @@ export default function App() {
 
       window.removeEventListener(
         'online',
-        onlineHandler
+        handleOnline
       );
 
       window.removeEventListener(
         'offline',
-        offlineHandler
+        handleOffline
       );
 
     };
 
   }, []);
+
+
+  /* LOAD EVENTS */
 
   useEffect(() => {
 
@@ -422,6 +537,9 @@ export default function App() {
 
       setEvents([]);
       setEv(null);
+      setEventsLoading(
+        false
+      );
 
       return;
 
@@ -430,6 +548,14 @@ export default function App() {
     let mounted = true;
 
     async function loadEvents() {
+
+      setEventsLoading(
+        true
+      );
+
+      setLoadError(
+        null
+      );
 
       const {
         data,
@@ -441,17 +567,31 @@ export default function App() {
           .order(
             'created_at',
             {
-              ascending: false,
+              ascending:
+                false,
             }
           );
 
-      if (!mounted) return;
+      if (!mounted) {
+        return;
+      }
 
       if (error) {
 
         console.error(
-          'Event load error:',
+          'Events load error:',
           error
+        );
+
+        setLoadError(
+          error.message
+        );
+
+        setEvents([]);
+        setEv(null);
+
+        setEventsLoading(
+          false
         );
 
         return;
@@ -459,13 +599,20 @@ export default function App() {
       }
 
       const list =
-        (data || []) as EventRow[];
+        (data ||
+          []) as EventRow[];
 
-      setEvents(list);
+      setEvents(
+        list
+      );
 
       if (!list.length) {
 
         setEv(null);
+
+        setEventsLoading(
+          false
+        );
 
         return;
 
@@ -489,11 +636,17 @@ export default function App() {
         savedEvent ||
         list[0];
 
-      setEv(selected);
+      setEv(
+        selected
+      );
 
       window.localStorage.setItem(
         SELECTED_EVENT_KEY,
         selected.id
+      );
+
+      setEventsLoading(
+        false
       );
 
     }
@@ -506,11 +659,16 @@ export default function App() {
 
   }, [session]);
 
+
+  /* SELECT */
+
   function handleSelected(
     event: EventRow
   ) {
 
-    setEv(event);
+    setEv(
+      event
+    );
 
     window.localStorage.setItem(
       SELECTED_EVENT_KEY,
@@ -518,6 +676,9 @@ export default function App() {
     );
 
   }
+
+
+  /* SAVE */
 
   function handleSaved(
     event: EventRow
@@ -553,11 +714,16 @@ export default function App() {
       }
     );
 
-    handleSelected(event);
+    handleSelected(
+      event
+    );
 
   }
 
-  if (!ready) {
+
+  /* LOADING */
+
+  if (authLoading) {
 
     return (
       <div className="relative min-h-screen">
@@ -565,13 +731,16 @@ export default function App() {
         <VyraBackground />
 
         <div className="relative z-10 grid min-h-screen place-items-center text-zinc-500">
-          Loading…
+          Loading PartyPass…
         </div>
 
       </div>
     );
 
   }
+
+
+  /* LOGIN */
 
   if (!session) {
 
@@ -588,6 +757,84 @@ export default function App() {
     );
 
   }
+
+
+  /* EVENTS LOADING */
+
+  if (eventsLoading) {
+
+    return (
+      <div className="relative min-h-screen">
+
+        <VyraBackground />
+
+        <div className="relative z-10 grid min-h-screen place-items-center">
+
+          <div className="text-center">
+
+            <div className="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-white/10 border-t-amber-300" />
+
+            <p className="mt-4 text-[9px] uppercase tracking-[.3em] text-zinc-600">
+              Loading Events
+            </p>
+
+          </div>
+
+        </div>
+
+      </div>
+    );
+
+  }
+
+
+  /* EVENT ERROR */
+
+  if (loadError) {
+
+    return (
+      <div className="relative min-h-screen">
+
+        <VyraBackground />
+
+        <div className="relative z-10 grid min-h-screen place-items-center p-5">
+
+          <div className="glass max-w-lg rounded-[28px] p-7 text-center">
+
+            <Icon
+              name="ban"
+              size={25}
+              className="mx-auto text-red-300"
+            />
+
+            <h2 className="font-display mt-5 text-3xl">
+              Couldn't load events
+            </h2>
+
+            <p className="mt-3 text-sm text-zinc-500">
+              {loadError}
+            </p>
+
+            <button
+              onClick={() =>
+                window.location.reload()
+              }
+              className="mt-6 rounded-2xl bg-gradient-to-r from-amber-500 to-amber-300 px-6 py-3 font-semibold text-black"
+            >
+              Reload
+            </button>
+
+          </div>
+
+        </div>
+
+      </div>
+    );
+
+  }
+
+
+  /* NO EVENT */
 
   if (!ev) {
 
@@ -615,6 +862,9 @@ export default function App() {
     );
 
   }
+
+
+  /* APP */
 
   return (
     <div className="relative min-h-screen">
