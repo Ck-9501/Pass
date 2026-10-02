@@ -1,1047 +1,876 @@
-import {
-  useEffect,
-  useRef,
-  useState,
-} from 'react';
+import { useEffect, useRef, useState } from "react";
+import { Html5Qrcode } from "html5-qrcode";
+import toast from "react-hot-toast";
 
-import toast from 'react-hot-toast';
+import { supabase, EventRow } from "../lib/supabase";
 
-import {
-  Html5Qrcode,
-} from 'html5-qrcode';
+interface ScannerProps {
+  ev: EventRow;
+}
 
-import {
-  supabase,
-  EventRow,
-} from '../lib/supabase';
+type ScanResult = "valid" | "already" | "revoked" | "invalid" | null;
 
-import Icon from '../components/Icon';
+interface GuestRow {
+  id: string;
+  event_id: string;
+  name: string;
+  pass_id: string;
+  qr_token: string;
+  status: "valid" | "checked_in" | "revoked";
+  checked_in_at: string | null;
+}
 
-type ScanResult = {
-  result:
-    | 'valid'
-    | 'already'
-    | 'invalid'
-    | 'revoked';
+interface ScanRecord {
+  id: number;
+  result: Exclude<ScanResult, null>;
+  name: string;
+  passId: string;
+  time: string;
+}
 
-  name?: string;
-  pass_id?: string;
-  pass_type?: string;
-  at?: string;
-};
+function extractToken(value: string): string {
+  const raw = value.trim();
 
-type ScanLog =
-  ScanResult & {
-    id: string;
-    scannedAt: string;
-  };
+  if (!raw) return "";
 
-function extractToken(
-  value: string
-): string {
-  const raw =
-    value.trim();
-
+  // QR can contain:
+  // https://pass-navy-two.vercel.app/verify/TOKEN
+  // OR just TOKEN
   try {
-    const url =
-      new URL(raw);
+    const url = new URL(raw);
+    const parts = url.pathname.split("/").filter(Boolean);
 
-    const parts =
-      url.pathname
-        .split('/')
-        .filter(Boolean);
-
-    const verifyIndex =
-      parts.findIndex(
-        (part) =>
-          part.toLowerCase() ===
-          'verify'
-      );
-
-    if (
-      verifyIndex >= 0 &&
-      parts[verifyIndex + 1]
-    ) {
-      return decodeURIComponent(
-        parts[verifyIndex + 1]
-      );
+    if (parts.length > 0) {
+      return decodeURIComponent(parts[parts.length - 1]).trim();
     }
   } catch {
-    // Raw token.
+    // Not a URL, so use the raw value.
   }
 
   return raw;
 }
 
-export default function Scanner({
-  ev,
-}: {
-  ev: EventRow;
-}) {
-  const scannerRef =
-    useRef<Html5Qrcode | null>(
-      null
-    );
+function resultLabel(result: ScanResult): string {
+  switch (result) {
+    case "valid":
+      return "VALID — ENTRY APPROVED";
+    case "already":
+      return "ALREADY CHECKED IN";
+    case "revoked":
+      return "PASS REVOKED";
+    case "invalid":
+      return "INVALID PASS";
+    default:
+      return "";
+  }
+}
 
-  const activeRef =
-    useRef(false);
+export default function Scanner({ ev }: ScannerProps) {
+  const scannerRef = useRef<Html5Qrcode | null>(null);
+  const runningRef = useRef(false);
+  const processingRef = useRef(false);
+  const lastTokenRef = useRef("");
 
-  const processingRef =
-    useRef(false);
+  const [running, setRunning] = useState(false);
+  const [manual, setManual] = useState("");
+  const [result, setResult] = useState<ScanResult>(null);
+  const [resultName, setResultName] = useState("");
+  const [resultPassId, setResultPassId] = useState("");
+  const [error, setError] = useState("");
+  const [records, setRecords] = useState<ScanRecord[]>([]);
 
-  const lastTokenRef =
-    useRef('');
-
-  const lastScanRef =
-    useRef(0);
-
-  const [
-    cameraReady,
-    setCameraReady,
-  ] =
-    useState(false);
-
-  const [
-    starting,
-    setStarting,
-  ] =
-    useState(true);
-
-  const [
-    result,
-    setResult,
-  ] =
-    useState<ScanResult | null>(
-      null
-    );
-
-  const [
-    manualToken,
-    setManualToken,
-  ] =
-    useState('');
-
-  const [
-    logs,
-    setLogs,
-  ] =
-    useState<ScanLog[]>([]);
+  const readerId = "partypass-qr-reader";
 
   useEffect(() => {
-
-    let mounted = true;
-
-    const scanner =
-      new Html5Qrcode(
-        'partypass-qr-reader'
-      );
-
-    scannerRef.current =
-      scanner;
-
-    async function startScanner() {
-
-      try {
-
-        setStarting(true);
-
-        await scanner.start(
-          {
-            facingMode:
-              'environment',
-          },
-          {
-            fps: 10,
-            qrbox: {
-              width: 250,
-              height: 250,
-            },
-            aspectRatio: 1,
-          },
-          async (
-            decodedText
-          ) => {
-
-            if (
-              !mounted ||
-              processingRef.current
-            ) {
-              return;
-            }
-
-            const token =
-              extractToken(
-                decodedText
-              );
-
-            if (!token) {
-              return;
-            }
-
-            const now =
-              Date.now();
-
-            if (
-              token ===
-                lastTokenRef.current &&
-              now -
-                lastScanRef.current <
-                3500
-            ) {
-              return;
-            }
-
-            lastTokenRef.current =
-              token;
-
-            lastScanRef.current =
-              now;
-
-            processingRef.current =
-              true;
-
-            await validateToken(
-              token
-            );
-
-            window.setTimeout(
-              () => {
-                processingRef.current =
-                  false;
-              },
-              1200
-            );
-
-          },
-          () => {
-            // Normal QR decode miss.
-          }
-        );
-
-        activeRef.current =
-          true;
-
-        if (mounted) {
-
-          setCameraReady(
-            true
-          );
-
-          setStarting(
-            false
-          );
-
-        }
-
-      } catch (error) {
-
-        console.error(
-          'Camera start error:',
-          error
-        );
-
-        if (mounted) {
-
-          setStarting(
-            false
-          );
-
-          toast.error(
-            'Camera could not start. Allow camera access or use manual validation.'
-          );
-
-        }
-
-      }
-    }
-
-    async function validateToken(
-      token: string
-    ) {
-
-      try {
-
-        const {
-          data,
-          error,
-        } =
-          await supabase.rpc(
-            'check_in',
-            {
-              p_token:
-                token,
-
-              p_device:
-                navigator.userAgent.slice(
-                  0,
-                  120
-                ),
-            }
-          );
-
-        if (error) {
-
-          console.error(
-            'Check-in error:',
-            error
-          );
-
-          const invalidResult: ScanResult = {
-            result:
-              'invalid',
-          };
-
-          setResult(
-            invalidResult
-          );
-
-          toast.error(
-            error.message ||
-              'Could not validate pass.'
-          );
-
-          return;
-        }
-
-        const scan =
-          data as ScanResult;
-
-        setResult(
-          scan
-        );
-
-        const log: ScanLog = {
-          ...scan,
-          id:
-            `${Date.now()}-${Math.random()}`,
-          scannedAt:
-            new Date().toISOString(),
-        };
-
-        setLogs(
-          (current) =>
-            [
-              log,
-              ...current,
-            ].slice(
-              0,
-              10
-            )
-        );
-
-        if (
-          scan.result ===
-          'valid'
-        ) {
-
-          toast.success(
-            `${scan.name || 'Guest'} checked in successfully.`
-          );
-
-        } else if (
-          scan.result ===
-          'already'
-        ) {
-
-          toast.error(
-            'Already checked in.'
-          );
-
-        } else if (
-          scan.result ===
-          'revoked'
-        ) {
-
-          toast.error(
-            'This pass has been revoked.'
-          );
-
-        } else {
-
-          toast.error(
-            'Invalid pass.'
-          );
-
-        }
-
-      } catch (error) {
-
-        console.error(
-          'Validation error:',
-          error
-        );
-
-        setResult({
-          result:
-            'invalid',
-        });
-
-        toast.error(
-          'Could not validate the pass.'
-        );
-
-      }
-    }
-
-    void startScanner();
-
     return () => {
+      const scanner = scannerRef.current;
 
-      mounted = false;
+      if (!scanner) return;
 
-      if (activeRef.current) {
-
-        activeRef.current =
-          false;
-
+      if (runningRef.current) {
         scanner
           .stop()
-          .catch(
-            () => undefined
-          );
+          .catch(() => {})
+          .finally(() => {
+            try {
+              scanner.clear();
+            } catch {}
+          });
+      } else {
+        try {
+          scanner.clear();
+        } catch {}
+      }
+    };
+  }, []);
 
+  function addRecord(
+    scanResult: Exclude<ScanResult, null>,
+    name = "",
+    passId = ""
+  ) {
+    const record: ScanRecord = {
+      id: Date.now(),
+      result: scanResult,
+      name,
+      passId,
+      time: new Date().toLocaleTimeString(),
+    };
+
+    setRecords((old) => [record, ...old].slice(0, 10));
+  }
+
+  async function processValue(value: string) {
+    if (processingRef.current) return;
+
+    const token = extractToken(value);
+
+    if (!token) {
+      setResult("invalid");
+      setError("QR code does not contain a valid token.");
+      return;
+    }
+
+    if (lastTokenRef.current === token) {
+      return;
+    }
+
+    processingRef.current = true;
+    lastTokenRef.current = token;
+
+    setError("");
+    setResult(null);
+    setResultName("");
+    setResultPassId("");
+
+    try {
+      /*
+       * STEP 1
+       * Find the guest ONLY by QR token.
+       *
+       * IMPORTANT:
+       * We do NOT compare the token against the currently selected event.
+       * A genuine QR should not become "invalid" because the scanner
+       * happened to have another event selected.
+       */
+
+      const { data: guest, error: lookupError } = await supabase
+        .from("guests")
+        .select(
+          "id,event_id,name,pass_id,qr_token,status,checked_in_at"
+        )
+        .eq("qr_token", token)
+        .maybeSingle();
+
+      if (lookupError) {
+        console.error("Guest lookup error:", lookupError);
+        throw new Error(
+          `Supabase lookup failed: ${lookupError.message}`
+        );
       }
 
       /*
-       * IMPORTANT:
-       * Html5Qrcode.clear() returns void.
-       * Therefore DO NOT use .catch() here.
+       * No matching token = fake/invalid QR.
        */
-      try {
-        scanner.clear();
-      } catch (error) {
-        console.error(
-          'Scanner clear error:',
-          error
-        );
-      }
-
-      scannerRef.current =
-        null;
-
-    };
-
-  }, [ev.id]);
-
-  async function stopCamera() {
-
-    if (
-      !scannerRef.current ||
-      !activeRef.current
-    ) {
-      return;
-    }
-
-    try {
-
-      await scannerRef.current.stop();
-
-      activeRef.current =
-        false;
-
-      setCameraReady(
-        false
-      );
-
-    } catch (error) {
-
-      console.error(
-        'Stop camera error:',
-        error
-      );
-
-    }
-  }
-
-  async function manualCheck(
-    e: React.FormEvent<HTMLFormElement>
-  ) {
-
-    e.preventDefault();
-
-    const token =
-      extractToken(
-        manualToken
-      );
-
-    if (!token) {
-
-      toast.error(
-        'Enter a QR token or URL.'
-      );
-
-      return;
-    }
-
-    processingRef.current =
-      true;
-
-    try {
-
-      const {
-        data,
-        error,
-      } =
-        await supabase.rpc(
-          'check_in',
-          {
-            p_token:
-              token,
-
-            p_device:
-              `manual-${navigator.userAgent.slice(
-                0,
-                100
-              )}`,
-          }
+      if (!guest) {
+        setResult("invalid");
+        setError(
+          "This QR token was not found in the Supabase guest list."
         );
 
-      if (error) {
+        addRecord("invalid");
 
-        console.error(
-          'Manual check-in error:',
-          error
-        );
+        toast.error("Invalid pass.");
 
-        setResult({
-          result:
-            'invalid',
-        });
-
-        toast.error(
-          error.message ||
-            'Could not validate pass.'
-        );
+        window.setTimeout(() => {
+          lastTokenRef.current = "";
+        }, 1800);
 
         return;
       }
 
-      const scan =
-        data as ScanResult;
+      const typedGuest = guest as GuestRow;
 
-      setResult(
-        scan
-      );
+      /*
+       * STEP 2
+       * Check current status.
+       */
 
-      setLogs(
-        (current) =>
-          [
-            {
-              ...scan,
-              id:
-                `${Date.now()}-${Math.random()}`,
-              scannedAt:
-                new Date().toISOString(),
-            },
-            ...current,
-          ].slice(
-            0,
-            10
-          )
-      );
+      if (typedGuest.status === "revoked") {
+        setResult("revoked");
+        setResultName(typedGuest.name || "");
+        setResultPassId(typedGuest.pass_id || "");
 
-      if (
-        scan.result ===
-        'valid'
-      ) {
-
-        toast.success(
-          `${scan.name || 'Guest'} checked in successfully.`
+        addRecord(
+          "revoked",
+          typedGuest.name,
+          typedGuest.pass_id
         );
 
-      } else if (
-        scan.result ===
-        'already'
-      ) {
+        setError("This pass has been revoked.");
+        toast.error("Pass revoked.");
 
-        toast.error(
-          'Already checked in.'
-        );
+        window.setTimeout(() => {
+          lastTokenRef.current = "";
+        }, 1800);
 
-      } else if (
-        scan.result ===
-        'revoked'
-      ) {
-
-        toast.error(
-          'This pass has been revoked.'
-        );
-
-      } else {
-
-        toast.error(
-          'Invalid pass.'
-        );
-
+        return;
       }
 
-    } finally {
+      if (typedGuest.status === "checked_in") {
+        setResult("already");
+        setResultName(typedGuest.name || "");
+        setResultPassId(typedGuest.pass_id || "");
 
-      setManualToken('');
+        addRecord(
+          "already",
+          typedGuest.name,
+          typedGuest.pass_id
+        );
 
-      window.setTimeout(
-        () => {
-          processingRef.current =
-            false;
-        },
-        1000
+        setError(
+          typedGuest.checked_in_at
+            ? `Checked in at ${new Date(
+                typedGuest.checked_in_at
+              ).toLocaleTimeString()}`
+            : "This pass has already been used."
+        );
+
+        toast.error("Already checked in.");
+
+        window.setTimeout(() => {
+          lastTokenRef.current = "";
+        }, 1800);
+
+        return;
+      }
+
+      /*
+       * STEP 3
+       * It is a valid unused pass.
+       *
+       * Change:
+       * valid -> checked_in
+       */
+
+      const { error: updateError } = await supabase
+        .from("guests")
+        .update({
+          status: "checked_in",
+          checked_in_at: new Date().toISOString(),
+        })
+        .eq("id", typedGuest.id)
+        .eq("qr_token", token)
+        .eq("status", "valid");
+
+      if (updateError) {
+        console.error("Guest update error:", updateError);
+
+        throw new Error(
+          `Could not check in guest: ${updateError.message}`
+        );
+      }
+
+      /*
+       * STEP 4
+       * Read the row again to confirm that the database actually changed.
+       */
+
+      const { data: verifiedGuest, error: verifyError } =
+        await supabase
+          .from("guests")
+          .select(
+            "id,event_id,name,pass_id,qr_token,status,checked_in_at"
+          )
+          .eq("id", typedGuest.id)
+          .maybeSingle();
+
+      if (verifyError) {
+        console.error("Verification lookup error:", verifyError);
+        throw new Error(
+          `Check-in succeeded but verification failed: ${verifyError.message}`
+        );
+      }
+
+      if (!verifiedGuest) {
+        throw new Error(
+          "Guest was found initially, but could not be read after check-in."
+        );
+      }
+
+      const finalGuest = verifiedGuest as GuestRow;
+
+      /*
+       * STEP 5
+       * Final result.
+       */
+
+      if (finalGuest.status === "checked_in") {
+        setResult("valid");
+        setResultName(finalGuest.name || "");
+        setResultPassId(finalGuest.pass_id || "");
+
+        addRecord(
+          "valid",
+          finalGuest.name,
+          finalGuest.pass_id
+        );
+
+        setError("");
+        toast.success("ENTRY APPROVED");
+
+        window.setTimeout(() => {
+          lastTokenRef.current = "";
+        }, 1800);
+
+        return;
+      }
+
+      if (finalGuest.status === "revoked") {
+        setResult("revoked");
+        setResultName(finalGuest.name || "");
+        setResultPassId(finalGuest.pass_id || "");
+
+        addRecord(
+          "revoked",
+          finalGuest.name,
+          finalGuest.pass_id
+        );
+
+        setError("This pass has been revoked.");
+        toast.error("Pass revoked.");
+
+        window.setTimeout(() => {
+          lastTokenRef.current = "";
+        }, 1800);
+
+        return;
+      }
+
+      setResult("invalid");
+      setError(
+        `Unexpected pass status: ${finalGuest.status}`
       );
 
+      addRecord(
+        "invalid",
+        finalGuest.name,
+        finalGuest.pass_id
+      );
+
+      window.setTimeout(() => {
+        lastTokenRef.current = "";
+      }, 1800);
+    } catch (err) {
+      console.error("Scanner error:", err);
+
+      setResult("invalid");
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Unable to validate this pass."
+      );
+
+      addRecord("invalid");
+
+      toast.error("Scanner validation failed.");
+
+      window.setTimeout(() => {
+        lastTokenRef.current = "";
+      }, 1800);
+    } finally {
+      processingRef.current = false;
     }
   }
 
-  const resultConfig = {
-    valid: {
-      title:
-        'CHECK-IN APPROVED',
-      subtitle:
-        'Guest admitted successfully',
-      color:
-        'text-emerald-300',
-      border:
-        'border-emerald-300/25',
-      bg:
-        'bg-emerald-300/[.05]',
-      icon:
-        'check',
-    },
+  async function startScanner() {
+    setError("");
+    setResult(null);
 
-    already: {
-      title:
-        'ALREADY CHECKED IN',
-      subtitle:
-        'This pass has already been used',
-      color:
-        'text-amber-200',
-      border:
-        'border-amber-300/25',
-      bg:
-        'bg-amber-300/[.05]',
-      icon:
-        'clock',
-    },
+    try {
+      if (!scannerRef.current) {
+        scannerRef.current = new Html5Qrcode(readerId);
+      }
 
-    invalid: {
-      title:
-        'INVALID PASS',
-      subtitle:
-        'No valid guest pass was found',
-      color:
-        'text-red-300',
-      border:
-        'border-red-300/25',
-      bg:
-        'bg-red-300/[.05]',
-      icon:
-        'ban',
-    },
+      if (runningRef.current) return;
 
-    revoked: {
-      title:
-        'PASS REVOKED',
-      subtitle:
-        'This pass cannot be used',
-      color:
-        'text-red-300',
-      border:
-        'border-red-300/25',
-      bg:
-        'bg-red-300/[.05]',
-      icon:
-        'ban',
-    },
-  } as const;
+      await scannerRef.current.start(
+        { facingMode: "environment" },
+        {
+          fps: 10,
+          qrbox: {
+            width: 260,
+            height: 260,
+          },
+          aspectRatio: 1,
+          disableFlip: false,
+        },
+        async (decodedText) => {
+          await processValue(decodedText);
+        },
+        () => {
+          // Normal QR frame miss — ignore.
+        }
+      );
+
+      runningRef.current = true;
+      setRunning(true);
+    } catch (err) {
+      console.error("Camera start error:", err);
+
+      runningRef.current = false;
+      setRunning(false);
+
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Could not start the camera."
+      );
+    }
+  }
+
+  async function stopScanner() {
+    const scanner = scannerRef.current;
+
+    if (!scanner) return;
+
+    try {
+      if (runningRef.current) {
+        await scanner.stop();
+      }
+    } catch (err) {
+      console.warn("Scanner stop warning:", err);
+    }
+
+    runningRef.current = false;
+    setRunning(false);
+
+    try {
+      scanner.clear();
+    } catch {}
+  }
+
+  async function manualCheck() {
+    const value = manual.trim();
+
+    if (!value) {
+      setError("Enter a QR URL or token.");
+      return;
+    }
+
+    await processValue(value);
+  }
+
+  const resultColor =
+    result === "valid"
+      ? "#86efac"
+      : result === "already"
+        ? "#fcd34d"
+        : "#fca5a5";
 
   return (
-    <div className="page-in space-y-6">
+    <div style={{ maxWidth: 1100, margin: "0 auto" }}>
+      <div
+        style={{
+          marginBottom: 20,
+        }}
+      >
+        <div
+          style={{
+            fontSize: 12,
+            color: "var(--text3)",
+            letterSpacing: 2,
+            textTransform: "uppercase",
+          }}
+        >
+          VYRA ENTRY CONTROL
+        </div>
 
-      {/* SCANNER */}
+        <h1
+          style={{
+            margin: "7px 0 0",
+            fontSize: 30,
+            fontWeight: 800,
+          }}
+        >
+          Scan Guest Pass
+        </h1>
 
-      <section className="grid gap-5 xl:grid-cols-[1fr_.82fr]">
+        <div
+          style={{
+            marginTop: 7,
+            fontSize: 13,
+            color: "var(--text2)",
+          }}
+        >
+          {ev?.name || "Event"}{" "}
+          {ev?.date ? `• ${ev.date}` : ""}
+        </div>
+      </div>
 
-        <div className="glass rounded-[28px] p-5 md:p-7">
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns:
+            "minmax(320px, 1fr) minmax(320px, 1fr)",
+          gap: 20,
+        }}
+      >
+        {/* CAMERA */}
 
-          <div className="flex items-start justify-between gap-4">
-
-            <div>
-
-              <p className="text-[10px] uppercase tracking-[.34em] text-amber-200/60">
-                Entrance Control
-              </p>
-
-              <h1 className="font-display mt-2 text-4xl md:text-5xl">
-                QR Scanner
-              </h1>
-
-              <p className="mt-2 text-sm text-zinc-500">
-                Scan passes for{' '}
-                <span className="text-zinc-300">
-                  {ev.name}
-                </span>
-              </p>
-
-            </div>
-
-            <div className="rounded-2xl border border-amber-300/15 bg-amber-300/[.04] p-3 text-amber-200">
-
-              <Icon
-                name="scanner"
-                size={22}
-              />
-
-            </div>
-
+        <div
+          className="card"
+          style={{
+            padding: 20,
+          }}
+        >
+          <div
+            style={{
+              fontSize: 12,
+              color: "var(--text3)",
+              letterSpacing: 1.5,
+              textTransform: "uppercase",
+              marginBottom: 12,
+            }}
+          >
+            Camera Scanner
           </div>
 
-          <div className="mt-6 overflow-hidden rounded-[25px] border border-white/[.08] bg-black">
+          <div
+            id={readerId}
+            style={{
+              width: "100%",
+              minHeight: 320,
+              borderRadius: 16,
+              overflow: "hidden",
+              background: "#000",
+            }}
+          />
 
-            <div className="relative aspect-square max-h-[520px] w-full">
-
-              <div
-                id="partypass-qr-reader"
-                className="h-full w-full [&>video]:h-full [&>video]:w-full [&>video]:object-cover"
-              />
-
-              <div className="pointer-events-none absolute left-1/2 top-1/2 h-[65%] w-[65%] -translate-x-1/2 -translate-y-1/2 rounded-[28px] border border-amber-200/45 shadow-[0_0_50px_rgba(226,177,93,.08)]" />
-
-              <div className="pointer-events-none absolute left-1/2 top-[18%] h-px w-[55%] -translate-x-1/2 bg-gradient-to-r from-transparent via-amber-200 to-transparent" />
-
-            </div>
-
-          </div>
-
-          <div className="mt-4 flex items-center justify-between gap-3">
-
-            <div className="flex items-center gap-2 text-xs text-zinc-500">
-
-              <span
-                className={`h-2 w-2 rounded-full ${
-                  cameraReady
-                    ? 'bg-emerald-300'
-                    : 'bg-amber-300'
-                }`}
-              />
-
-              {cameraReady
-                ? 'Camera active'
-                : starting
-                  ? 'Starting camera…'
-                  : 'Camera paused'}
-
-            </div>
-
-            {cameraReady && (
+          <div
+            style={{
+              display: "flex",
+              gap: 10,
+              marginTop: 14,
+            }}
+          >
+            {!running ? (
               <button
-                type="button"
-                onClick={() =>
-                  void stopCamera()
-                }
-                className="action-btn"
+                className="btn"
+                onClick={startScanner}
+                style={{
+                  width: "100%",
+                }}
               >
-                Pause Camera
+                START CAMERA
+              </button>
+            ) : (
+              <button
+                className="btn"
+                onClick={stopScanner}
+                style={{
+                  width: "100%",
+                }}
+              >
+                STOP CAMERA
               </button>
             )}
-
           </div>
-
         </div>
 
         {/* RESULT */}
 
-        <div className="space-y-5">
+        <div
+          className="card"
+          style={{
+            padding: 20,
+          }}
+        >
+          <div
+            style={{
+              fontSize: 12,
+              color: "var(--text3)",
+              letterSpacing: 1.5,
+              textTransform: "uppercase",
+            }}
+          >
+            Latest Scan
+          </div>
 
-          <div className="glass rounded-[28px] p-5 md:p-7">
-
-            <p className="text-[10px] uppercase tracking-[.3em] text-zinc-600">
-              Scan Result
-            </p>
-
-            {!result ? (
-
-              <div className="mt-5 rounded-[24px] border border-dashed border-white/[.08] p-10 text-center">
-
-                <div className="mx-auto grid h-16 w-16 place-items-center rounded-full border border-white/[.08] text-zinc-600">
-
-                  <Icon
-                    name="scanner"
-                    size={27}
-                  />
-
+          <div
+            style={{
+              marginTop: 15,
+              minHeight: 180,
+              display: "flex",
+              flexDirection: "column",
+              justifyContent: "center",
+              alignItems: "center",
+              textAlign: "center",
+              borderRadius: 18,
+              border:
+                result === "valid"
+                  ? "1px solid rgba(34,197,94,.35)"
+                  : result === "revoked" ||
+                      result === "invalid"
+                    ? "1px solid rgba(239,68,68,.35)"
+                    : "1px solid rgba(255,255,255,.08)",
+              background:
+                result === "valid"
+                  ? "rgba(34,197,94,.07)"
+                  : result === "revoked" ||
+                      result === "invalid"
+                    ? "rgba(239,68,68,.07)"
+                    : "rgba(255,255,255,.025)",
+              padding: 20,
+              boxSizing: "border-box",
+            }}
+          >
+            {!result && (
+              <>
+                <div
+                  style={{
+                    fontSize: 15,
+                    color: "var(--text2)",
+                  }}
+                >
+                  Waiting for QR...
                 </div>
 
-                <p className="mt-5 text-sm text-zinc-400">
-                  Waiting for a pass…
-                </p>
-
-                <p className="mt-2 text-xs text-zinc-600">
-                  Point the camera at a guest QR.
-                </p>
-
-              </div>
-
-            ) : (
-
-              (() => {
-
-                const ui =
-                  resultConfig[
-                    result.result
-                  ];
-
-                return (
-                  <div
-                    className={`mt-5 rounded-[24px] border ${ui.border} ${ui.bg} p-6`}
-                  >
-
-                    <div
-                      className={`mx-auto grid h-16 w-16 place-items-center rounded-full border ${ui.border} ${ui.color}`}
-                    >
-
-                      <Icon
-                        name={ui.icon}
-                        size={28}
-                      />
-
-                    </div>
-
-                    <p
-                      className={`mt-5 text-center text-sm font-semibold tracking-[.17em] ${ui.color}`}
-                    >
-                      {ui.title}
-                    </p>
-
-                    <p className="mt-2 text-center text-sm text-zinc-500">
-                      {ui.subtitle}
-                    </p>
-
-                    {result.name && (
-                      <div className="mt-6 text-center">
-
-                        <p className="font-display text-4xl text-white">
-                          {result.name}
-                        </p>
-
-                        <p className="mt-2 font-mono text-xs text-zinc-600">
-                          {result.pass_id ||
-                            '—'}
-                        </p>
-
-                      </div>
-                    )}
-
-                    {result.at && (
-                      <p className="mt-5 text-center text-[10px] uppercase tracking-[.2em] text-zinc-700">
-                        {new Date(
-                          result.at
-                        ).toLocaleString()}
-                      </p>
-                    )}
-
-                  </div>
-                );
-
-              })()
-
+                <div
+                  style={{
+                    marginTop: 7,
+                    fontSize: 12,
+                    color: "var(--text3)",
+                  }}
+                >
+                  Scan a VYRA guest pass
+                </div>
+              </>
             )}
 
+            {result && (
+              <>
+                <div
+                  style={{
+                    fontSize: 22,
+                    fontWeight: 800,
+                    color: resultColor,
+                  }}
+                >
+                  {resultLabel(result)}
+                </div>
+
+                {resultName && (
+                  <div
+                    style={{
+                      marginTop: 12,
+                      fontFamily: "Georgia, serif",
+                      fontSize: 24,
+                      fontWeight: 700,
+                    }}
+                  >
+                    {resultName}
+                  </div>
+                )}
+
+                {resultPassId && (
+                  <div
+                    style={{
+                      marginTop: 7,
+                      fontFamily: "monospace",
+                      fontSize: 12,
+                      color: "var(--text3)",
+                    }}
+                  >
+                    {resultPassId}
+                  </div>
+                )}
+              </>
+            )}
           </div>
+
+          {error && (
+            <div
+              style={{
+                marginTop: 12,
+                padding: 12,
+                borderRadius: 10,
+                background: "rgba(239,68,68,.08)",
+                border: "1px solid rgba(239,68,68,.22)",
+                color: "#fca5a5",
+                fontSize: 12,
+                wordBreak: "break-word",
+              }}
+            >
+              {error}
+            </div>
+          )}
 
           {/* MANUAL */}
 
-          <div className="glass rounded-[28px] p-5 md:p-7">
-
-            <p className="text-[10px] uppercase tracking-[.3em] text-zinc-600">
-              Manual Validation
-            </p>
-
-            <p className="mt-2 text-xs text-zinc-600">
-              Paste a QR token if camera scanning is unavailable.
-            </p>
-
-            <form
-              onSubmit={
-                manualCheck
-              }
-              className="mt-4 flex gap-2"
+          <div
+            style={{
+              marginTop: 20,
+              paddingTop: 18,
+              borderTop:
+                "1px solid rgba(255,255,255,.08)",
+            }}
+          >
+            <div
+              style={{
+                fontSize: 12,
+                fontWeight: 700,
+                marginBottom: 8,
+              }}
             >
+              Manual Validation
+            </div>
 
-              <input
-                value={
-                  manualToken
-                }
-                onChange={(e) =>
-                  setManualToken(
-                    e.target.value
-                  )
-                }
-                placeholder="Paste QR token or URL"
-                className="min-w-0 rounded-2xl px-4 py-3"
-              />
+            <input
+              value={manual}
+              onChange={(e) =>
+                setManual(e.target.value)
+              }
+              placeholder="Paste QR URL or token"
+              style={{
+                width: "100%",
+                boxSizing: "border-box",
+                padding: "12px 13px",
+                borderRadius: 10,
+                border: "1px solid var(--hair)",
+                background: "var(--panel2)",
+                color: "var(--text)",
+                outline: "none",
+              }}
+            />
 
-              <button
-                type="submit"
-                className="shrink-0 rounded-2xl bg-gradient-to-r from-amber-500 to-amber-300 px-5 font-semibold text-black"
-              >
-                Check
-              </button>
-
-            </form>
-
+            <button
+              className="btn"
+              onClick={manualCheck}
+              style={{
+                width: "100%",
+                marginTop: 9,
+              }}
+            >
+              VALIDATE
+            </button>
           </div>
-
         </div>
-
-      </section>
+      </div>
 
       {/* RECENT SCANS */}
 
-      <section className="glass rounded-[28px] p-5 md:p-7">
+      <div
+        className="card"
+        style={{
+          marginTop: 20,
+          padding: 20,
+        }}
+      >
+        <div
+          style={{
+            fontSize: 14,
+            fontWeight: 700,
+            marginBottom: 15,
+          }}
+        >
+          Recent Scans
+        </div>
 
-        <div className="flex items-end justify-between">
-
-          <div>
-
-            <p className="text-[10px] uppercase tracking-[.3em] text-zinc-600">
-              Live Activity
-            </p>
-
-            <h2 className="font-display mt-1 text-3xl">
-              Recent Scans
-            </h2>
-
+        {records.length === 0 ? (
+          <div
+            style={{
+              padding: 25,
+              textAlign: "center",
+              color: "var(--text3)",
+              fontSize: 12,
+            }}
+          >
+            No scans yet.
           </div>
-
-          <span className="text-[10px] uppercase tracking-[.2em] text-zinc-700">
-            {logs.length} shown
-          </span>
-
-        </div>
-
-        <div className="mt-5 overflow-x-auto">
-
-          <table className="w-full min-w-[700px] text-left">
-
-            <thead className="border-y border-white/[.07] text-[9px] uppercase tracking-[.18em] text-zinc-600">
-
-              <tr>
-
-                <th className="px-4 py-3.5">
-                  Guest
-                </th>
-
-                <th className="px-4 py-3.5">
-                  Pass ID
-                </th>
-
-                <th className="px-4 py-3.5">
-                  Result
-                </th>
-
-                <th className="px-4 py-3.5">
-                  Time
-                </th>
-
-              </tr>
-
-            </thead>
-
-            <tbody>
-
-              {!logs.length ? (
-
-                <tr>
-
-                  <td
-                    colSpan={4}
-                    className="px-4 py-12 text-center text-zinc-700"
+        ) : (
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: 9,
+            }}
+          >
+            {records.map((record) => (
+              <div
+                key={record.id}
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  gap: 12,
+                  padding: "12px 13px",
+                  borderRadius: 10,
+                  border: "1px solid var(--hair)",
+                  background:
+                    "rgba(255,255,255,.02)",
+                }}
+              >
+                <div>
+                  <div
+                    style={{
+                      fontSize: 13,
+                      fontWeight: 600,
+                    }}
                   >
-                    No scans yet.
-                  </td>
+                    {record.name || "Unknown guest"}
+                  </div>
 
-                </tr>
+                  {record.passId && (
+                    <div
+                      style={{
+                        marginTop: 3,
+                        fontSize: 11,
+                        fontFamily: "monospace",
+                        color: "var(--text3)",
+                      }}
+                    >
+                      {record.passId}
+                    </div>
+                  )}
+                </div>
 
-              ) : (
+                <div
+                  style={{
+                    textAlign: "right",
+                  }}
+                >
+                  <div
+                    style={{
+                      fontSize: 10,
+                      fontWeight: 700,
+                      letterSpacing: 1,
+                      color:
+                        record.result === "valid"
+                          ? "#86efac"
+                          : record.result === "already"
+                            ? "#fcd34d"
+                            : "#fca5a5",
+                    }}
+                  >
+                    {record.result.toUpperCase()}
+                  </div>
 
-                logs.map(
-                  (log) => {
-
-                    const color =
-                      log.result ===
-                      'valid'
-                        ? 'text-emerald-300'
-                        : log.result ===
-                            'already'
-                          ? 'text-amber-200'
-                          : 'text-red-300';
-
-                    const label =
-                      log.result ===
-                      'valid'
-                        ? 'Approved'
-                        : log.result ===
-                            'already'
-                          ? 'Already Checked In'
-                          : log.result ===
-                              'revoked'
-                            ? 'Revoked'
-                            : 'Invalid';
-
-                    return (
-                      <tr
-                        key={log.id}
-                        className="border-t border-white/[.055]"
-                      >
-
-                        <td className="px-4 py-4 text-sm text-zinc-200">
-                          {log.name ||
-                            'Unknown'}
-                        </td>
-
-                        <td className="px-4 py-4 font-mono text-xs text-zinc-500">
-                          {log.pass_id ||
-                            '—'}
-                        </td>
-
-                        <td
-                          className={`px-4 py-4 text-xs ${color}`}
-                        >
-
-                          <span className="mr-2 inline-block h-1.5 w-1.5 rounded-full bg-current" />
-
-                          {label}
-
-                        </td>
-
-                        <td className="px-4 py-4 text-xs text-zinc-600">
-                          {new Date(
-                            log.scannedAt
-                          ).toLocaleTimeString(
-                            [],
-                            {
-                              hour:
-                                'numeric',
-                              minute:
-                                '2-digit',
-                            }
-                          )}
-                        </td>
-
-                      </tr>
-                    );
-
-                  }
-                )
-
-              )}
-
-            </tbody>
-
-          </table>
-
-        </div>
-
-      </section>
-
+                  <div
+                    style={{
+                      marginTop: 3,
+                      fontSize: 10,
+                      color: "var(--text3)",
+                    }}
+                  >
+                    {record.time}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
