@@ -40,6 +40,7 @@ type RequestRow = {
   pdf_path: string | null;
   generated_at: string | null;
   issued_price: number | null;
+  drive_file_id: string | null;
 };
 
 type ProfileRow = {
@@ -50,7 +51,7 @@ type ProfileRow = {
 };
 
 /* ========================================================= */
-/* CHANGE THESE PRICES TO YOUR ACTUAL VYRA PRICES            */
+/* PRICES                                                    */
 /* ========================================================= */
 
 const PASS_PRICES: Record<string, number> = {
@@ -59,8 +60,6 @@ const PASS_PRICES: Record<string, number> = {
   Couple: 1500,
   "Surge Pass": 1200,
 };
-
-/* ========================================================= */
 
 const PASS_TYPES = [
   "Regular",
@@ -134,6 +133,46 @@ function venueText(venue: string | null) {
   return venue?.trim() || "VENUE TBA";
 }
 
+/* ========================================================= */
+/* PDF BLOB → BASE64                                         */
+/* ========================================================= */
+
+async function blobToBase64(
+  blob: Blob
+): Promise<string> {
+  const arrayBuffer =
+    await blob.arrayBuffer();
+
+  const bytes =
+    new Uint8Array(arrayBuffer);
+
+  const chunkSize = 0x8000;
+
+  let binary = "";
+
+  for (
+    let i = 0;
+    i < bytes.length;
+    i += chunkSize
+  ) {
+    const chunk = bytes.subarray(
+      i,
+      Math.min(
+        i + chunkSize,
+        bytes.length
+      )
+    );
+
+    binary += String.fromCharCode(
+      ...chunk
+    );
+  }
+
+  return btoa(binary);
+}
+
+/* ========================================================= */
+
 export default function Requests({
   role,
   event,
@@ -141,32 +180,47 @@ export default function Requests({
   role: Role;
   event: EventRow | null;
 }) {
-  const [requests, setRequests] = useState<RequestRow[]>(
-    []
-  );
+  const [requests, setRequests] =
+    useState<RequestRow[]>([]);
 
-  const [profiles, setProfiles] = useState<
-    Record<string, ProfileRow>
-  >({});
+  const [profiles, setProfiles] =
+    useState<Record<string, ProfileRow>>(
+      {}
+    );
 
-  const [loading, setLoading] = useState(true);
-  const [submitting, setSubmitting] = useState(false);
+  const [loading, setLoading] =
+    useState(true);
+
+  const [submitting, setSubmitting] =
+    useState(false);
+
   const [generatingId, setGeneratingId] =
     useState<string | null>(null);
 
-  const [guestName, setGuestName] = useState("");
-  const [phone, setPhone] = useState("");
+  const [guestName, setGuestName] =
+    useState("");
+
+  const [phone, setPhone] =
+    useState("");
+
   const [passType, setPassType] =
     useState("Regular");
-  const [notes, setNotes] = useState("");
 
-  const [message, setMessage] = useState("");
-  const [error, setError] = useState("");
+  const [notes, setNotes] =
+    useState("");
+
+  const [message, setMessage] =
+    useState("");
+
+  const [error, setError] =
+    useState("");
 
   const [pdfGuest, setPdfGuest] =
     useState<any>(null);
 
-  const [pdfQr, setPdfQr] = useState("");
+  const [pdfQr, setPdfQr] =
+    useState("");
+
   const [pdfEvent, setPdfEvent] =
     useState<EventRow | null>(null);
 
@@ -215,7 +269,8 @@ export default function Requests({
         guest_id,
         pdf_path,
         generated_at,
-        issued_price
+        issued_price,
+        drive_file_id
         `
       )
       .eq("event_id", event.id)
@@ -405,7 +460,7 @@ export default function Requests({
   };
 
   /* ========================================================= */
-  /* GENERATE PDF                                              */
+  /* GENERATE PDF + GOOGLE DRIVE BACKUP                       */
   /* ========================================================= */
 
   const generatePassForRequest = async (
@@ -419,7 +474,7 @@ export default function Requests({
 
     try {
       /* ----------------------------------------------------- */
-      /* 1. Create guest                                      */
+      /* 1. Create guest                                       */
       /* ----------------------------------------------------- */
 
       const passId = newPassId();
@@ -456,7 +511,7 @@ export default function Requests({
       }
 
       /* ----------------------------------------------------- */
-      /* 2. Generate QR                                       */
+      /* 2. Generate QR                                        */
       /* ----------------------------------------------------- */
 
       const qr = await generateQr(
@@ -473,7 +528,7 @@ export default function Requests({
       }
 
       /* ----------------------------------------------------- */
-      /* 3. Prepare PDF artwork                              */
+      /* 3. Prepare PDF artwork                               */
       /* ----------------------------------------------------- */
 
       setPdfVersion(Date.now());
@@ -536,7 +591,7 @@ export default function Requests({
       await sleep(300);
 
       /* ----------------------------------------------------- */
-      /* 4. Capture pass                                      */
+      /* 4. Capture pass                                       */
       /* ----------------------------------------------------- */
 
       const canvas =
@@ -557,7 +612,7 @@ export default function Requests({
         );
 
       /* ----------------------------------------------------- */
-      /* 5. Create PDF                                        */
+      /* 5. Create PDF                                         */
       /* ----------------------------------------------------- */
 
       const pdf = new jsPDF({
@@ -582,7 +637,7 @@ export default function Requests({
         pdf.output("blob");
 
       /* ----------------------------------------------------- */
-      /* 6. Upload PDF                                        */
+      /* 6. Upload PDF to Supabase Storage                     */
       /* ----------------------------------------------------- */
 
       const pdfPath =
@@ -609,7 +664,79 @@ export default function Requests({
       }
 
       /* ----------------------------------------------------- */
-      /* 7. SAVE ISSUED PRICE                                */
+      /* 7. Google Drive Backup                                */
+      /* ----------------------------------------------------- */
+
+      let driveFileId:
+        | string
+        | null = null;
+
+      let driveBackupError:
+        | string
+        | null = null;
+
+      try {
+        const pdfBase64 =
+          await blobToBase64(blob);
+
+        const {
+          data: driveData,
+          error: driveError,
+        } = await supabase.functions.invoke(
+          "google-drive",
+          {
+            body: {
+              action: "upload",
+              fileName:
+                `${guest.pass_id}.pdf`,
+              pdfBase64,
+            },
+          }
+        );
+
+        if (driveError) {
+          throw new Error(
+            driveError.message
+          );
+        }
+
+        if (
+          !driveData?.success ||
+          !driveData?.fileId
+        ) {
+          throw new Error(
+            driveData?.error ||
+              "Google Drive upload failed."
+          );
+        }
+
+        driveFileId =
+          driveData.fileId;
+
+        console.log(
+          "Google Drive backup successful:",
+          driveFileId
+        );
+      } catch (driveErr) {
+        driveBackupError =
+          driveErr instanceof Error
+            ? driveErr.message
+            : "Google Drive backup failed.";
+
+        console.error(
+          "Google Drive backup error:",
+          driveErr
+        );
+
+        /*
+         * IMPORTANT:
+         * Do NOT stop ticket generation.
+         * Supabase Storage remains the primary copy.
+         */
+      }
+
+      /* ----------------------------------------------------- */
+      /* 8. Save request status + Drive file ID                */
       /* ----------------------------------------------------- */
 
       const issuedPrice =
@@ -629,6 +756,8 @@ export default function Requests({
             new Date().toISOString(),
           issued_price:
             issuedPrice,
+          drive_file_id:
+            driveFileId,
         })
         .eq("id", request.id);
 
@@ -638,9 +767,21 @@ export default function Requests({
         );
       }
 
+      /* ----------------------------------------------------- */
+      /* 9. Final message                                     */
+      /* ----------------------------------------------------- */
+
       setMessage(
-        `Pass generated successfully for ${request.guest_name}.`
+        driveBackupError
+          ? `Pass generated successfully for ${request.guest_name}.`
+          : `Pass generated successfully for ${request.guest_name}. Google Drive backup completed.`
       );
+
+      if (driveBackupError) {
+        setError(
+          `Google Drive backup failed: ${driveBackupError}. The pass is still available through Supabase.`
+        );
+      }
 
       setPdfGuest(null);
       setPdfQr("");
@@ -1037,6 +1178,12 @@ export default function Requests({
                                             {request.guest_id}
                                           </p>
                                         )}
+
+                                        <p className="mt-1 text-[10px] text-slate-500">
+                                          {request.drive_file_id
+                                            ? "✓ Google Drive backup saved"
+                                            : "⚠ Google Drive backup unavailable"}
+                                        </p>
                                       </div>
 
                                       <div className="text-left md:text-right">
@@ -1429,9 +1576,17 @@ export default function Requests({
                       "generated" && (
                       <div className="mt-3 flex items-center justify-between border-t border-white/5 pt-3">
 
-                        <p className="text-xs text-green-400">
-                          Pass generated and delivered to the submitting member.
-                        </p>
+                        <div>
+                          <p className="text-xs text-green-400">
+                            Pass generated and delivered to the submitting member.
+                          </p>
+
+                          <p className="mt-1 text-[10px] text-slate-500">
+                            {request.drive_file_id
+                              ? "✓ Google Drive backup saved"
+                              : "⚠ Google Drive backup unavailable"}
+                          </p>
+                        </div>
 
                         <p className="text-xs font-semibold text-slate-300">
                           {formatMoney(
