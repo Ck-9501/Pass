@@ -50,10 +50,6 @@ type ProfileRow = {
   member_code: string | null;
 };
 
-/* ========================================================= */
-/* PRICES                                                    */
-/* ========================================================= */
-
 const PASS_PRICES: Record<string, number> = {
   Regular: 800,
   "Early Bird": 600,
@@ -69,9 +65,7 @@ const PASS_TYPES = [
 ];
 
 const sleep = (ms: number) =>
-  new Promise<void>((resolve) =>
-    setTimeout(resolve, ms)
-  );
+  new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 function getPassPrice(passType: string): number {
   return PASS_PRICES[passType] ?? 0;
@@ -105,9 +99,7 @@ function formatDate(date: string | null) {
     "DEC",
   ];
 
-  return `${day} ${
-    months[Number(month) - 1] || month
-  } ${year}`;
+  return `${day} ${months[Number(month) - 1] || month} ${year}`;
 }
 
 function formatTime(time: string | null) {
@@ -134,43 +126,30 @@ function venueText(venue: string | null) {
 }
 
 /* ========================================================= */
-/* PDF BLOB → BASE64                                         */
+/* PDF BLOB -> BASE64                                        */
 /* ========================================================= */
 
-async function blobToBase64(
-  blob: Blob
-): Promise<string> {
-  const arrayBuffer =
-    await blob.arrayBuffer();
-
-  const bytes =
-    new Uint8Array(arrayBuffer);
+async function blobToBase64(blob: Blob): Promise<string> {
+  const arrayBuffer = await blob.arrayBuffer();
+  const bytes = new Uint8Array(arrayBuffer);
 
   const chunkSize = 0x8000;
-
   let binary = "";
 
-  for (
-    let i = 0;
-    i < bytes.length;
-    i += chunkSize
-  ) {
+  for (let i = 0; i < bytes.length; i += chunkSize) {
     const chunk = bytes.subarray(
       i,
-      Math.min(
-        i + chunkSize,
-        bytes.length
-      )
+      Math.min(i + chunkSize, bytes.length)
     );
 
-    binary += String.fromCharCode(
-      ...chunk
-    );
+    binary += String.fromCharCode(...chunk);
   }
 
   return btoa(binary);
 }
 
+/* ========================================================= */
+/* COMPONENT                                                  */
 /* ========================================================= */
 
 export default function Requests({
@@ -180,58 +159,33 @@ export default function Requests({
   role: Role;
   event: EventRow | null;
 }) {
-  const [requests, setRequests] =
-    useState<RequestRow[]>([]);
-
+  const [requests, setRequests] = useState<RequestRow[]>([]);
   const [profiles, setProfiles] =
-    useState<Record<string, ProfileRow>>(
-      {}
-    );
-
-  const [loading, setLoading] =
-    useState(true);
-
-  const [submitting, setSubmitting] =
-    useState(false);
-
+    useState<Record<string, ProfileRow>>({});
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
   const [generatingId, setGeneratingId] =
     useState<string | null>(null);
 
-  const [guestName, setGuestName] =
-    useState("");
+  const [guestName, setGuestName] = useState("");
+  const [phone, setPhone] = useState("");
+  const [passType, setPassType] = useState("Regular");
+  const [notes, setNotes] = useState("");
 
-  const [phone, setPhone] =
-    useState("");
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
 
-  const [passType, setPassType] =
-    useState("Regular");
-
-  const [notes, setNotes] =
-    useState("");
-
-  const [message, setMessage] =
-    useState("");
-
-  const [error, setError] =
-    useState("");
-
-  const [pdfGuest, setPdfGuest] =
-    useState<any>(null);
-
-  const [pdfQr, setPdfQr] =
-    useState("");
-
+  const [pdfGuest, setPdfGuest] = useState<any>(null);
+  const [pdfQr, setPdfQr] = useState("");
   const [pdfEvent, setPdfEvent] =
     useState<EventRow | null>(null);
-
   const [pdfVersion, setPdfVersion] =
     useState(() => Date.now());
 
   const [expandedMember, setExpandedMember] =
     useState<string | null>(null);
 
-  const pdfRef =
-    useRef<HTMLDivElement>(null);
+  const pdfRef = useRef<HTMLDivElement>(null);
 
   const readerProfile = (
     userId: string
@@ -255,8 +209,7 @@ export default function Requests({
 
     let query = supabase
       .from("guest_requests")
-      .select(
-        `
+      .select(`
         id,
         event_id,
         guest_name,
@@ -271,8 +224,7 @@ export default function Requests({
         generated_at,
         issued_price,
         drive_file_id
-        `
-      )
+      `)
       .eq("event_id", event.id)
       .order("created_at", {
         ascending: false,
@@ -289,10 +241,7 @@ export default function Requests({
         return;
       }
 
-      query = query.eq(
-        "submitted_by",
-        user.id
-      );
+      query = query.eq("submitted_by", user.id);
     }
 
     const {
@@ -313,9 +262,7 @@ export default function Requests({
 
     setRequests(loadedRequests);
 
-    /* ------------------------------------------------------- */
-    /* Load profiles for Admin member breakdown                */
-    /* ------------------------------------------------------- */
+    /* Load profiles for admin */
 
     if (
       role === "admin" &&
@@ -324,8 +271,7 @@ export default function Requests({
       const userIds = [
         ...new Set(
           loadedRequests.map(
-            (request) =>
-              request.submitted_by
+            (request) => request.submitted_by
           )
         ),
       ];
@@ -335,14 +281,12 @@ export default function Requests({
         error: profileError,
       } = await supabase
         .from("profiles")
-        .select(
-          `
+        .select(`
           user_id,
           full_name,
           role,
           member_code
-          `
-        )
+        `)
         .in("user_id", userIds);
 
       if (profileError) {
@@ -357,8 +301,7 @@ export default function Requests({
         > = {};
 
         (
-          (profileData ??
-            []) as ProfileRow[]
+          (profileData ?? []) as ProfileRow[]
         ).forEach((profile) => {
           profileMap[profile.user_id] =
             profile;
@@ -397,9 +340,7 @@ export default function Requests({
     }
 
     if (!guestName.trim()) {
-      setError(
-        "Guest name is required."
-      );
+      setError("Guest name is required.");
       return;
     }
 
@@ -422,13 +363,10 @@ export default function Requests({
           .insert({
             event_id: event.id,
             submitted_by: user.id,
-            guest_name:
-              guestName.trim(),
-            phone:
-              phone.trim() || null,
+            guest_name: guestName.trim(),
+            phone: phone.trim() || null,
             pass_type: passType,
-            notes:
-              notes.trim() || null,
+            notes: notes.trim() || null,
             status: "pending",
           });
 
@@ -460,7 +398,7 @@ export default function Requests({
   };
 
   /* ========================================================= */
-  /* GENERATE PDF + GOOGLE DRIVE BACKUP                       */
+  /* GENERATE PASS                                             */
   /* ========================================================= */
 
   const generatePassForRequest = async (
@@ -474,7 +412,7 @@ export default function Requests({
 
     try {
       /* ----------------------------------------------------- */
-      /* 1. Create guest                                       */
+      /* 1. CREATE GUEST                                       */
       /* ----------------------------------------------------- */
 
       const passId = newPassId();
@@ -511,7 +449,7 @@ export default function Requests({
       }
 
       /* ----------------------------------------------------- */
-      /* 2. Generate QR                                        */
+      /* 2. GENERATE QR                                        */
       /* ----------------------------------------------------- */
 
       const qr = await generateQr(
@@ -528,7 +466,7 @@ export default function Requests({
       }
 
       /* ----------------------------------------------------- */
-      /* 3. Prepare PDF artwork                               */
+      /* 3. PREPARE PDF ARTWORK                               */
       /* ----------------------------------------------------- */
 
       setPdfVersion(Date.now());
@@ -554,11 +492,10 @@ export default function Requests({
         );
       }
 
-      const rendered =
-        await waitForPass(
-          element,
-          guest.pass_id
-        );
+      const rendered = await waitForPass(
+        element,
+        guest.pass_id
+      );
 
       if (!rendered) {
         throw new Error(
@@ -591,11 +528,12 @@ export default function Requests({
       await sleep(300);
 
       /* ----------------------------------------------------- */
-      /* 4. Capture pass                                       */
+      /* 4. CAPTURE PASS                                       */
       /* ----------------------------------------------------- */
 
-      const canvas =
-        await html2canvas(element, {
+      const canvas = await html2canvas(
+        element,
+        {
           width: 1024,
           height: 1536,
           scale: 2,
@@ -603,16 +541,16 @@ export default function Requests({
           allowTaint: false,
           backgroundColor: "#050810",
           logging: false,
-        });
+        }
+      );
 
-      const image =
-        canvas.toDataURL(
-          "image/jpeg",
-          0.96
-        );
+      const image = canvas.toDataURL(
+        "image/jpeg",
+        0.96
+      );
 
       /* ----------------------------------------------------- */
-      /* 5. Create PDF                                         */
+      /* 5. CREATE PDF                                         */
       /* ----------------------------------------------------- */
 
       const pdf = new jsPDF({
@@ -633,11 +571,10 @@ export default function Requests({
         "FAST"
       );
 
-      const blob =
-        pdf.output("blob");
+      const blob = pdf.output("blob");
 
       /* ----------------------------------------------------- */
-      /* 6. Upload PDF to Supabase Storage                     */
+      /* 6. SUPABASE STORAGE                                   */
       /* ----------------------------------------------------- */
 
       const pdfPath =
@@ -664,7 +601,7 @@ export default function Requests({
       }
 
       /* ----------------------------------------------------- */
-      /* 7. Google Drive Backup                                */
+      /* 7. GOOGLE DRIVE BACKUP                                */
       /* ----------------------------------------------------- */
 
       let driveFileId:
@@ -676,8 +613,16 @@ export default function Requests({
         | null = null;
 
       try {
+        console.log(
+          "Starting Google Drive backup..."
+        );
+
         const pdfBase64 =
           await blobToBase64(blob);
+
+        console.log(
+          "PDF converted to base64."
+        );
 
         const {
           data: driveData,
@@ -692,6 +637,11 @@ export default function Requests({
               pdfBase64,
             },
           }
+        );
+
+        console.log(
+          "Google Drive function response:",
+          driveData
         );
 
         if (driveError) {
@@ -727,16 +677,10 @@ export default function Requests({
           "Google Drive backup error:",
           driveErr
         );
-
-        /*
-         * IMPORTANT:
-         * Do NOT stop ticket generation.
-         * Supabase Storage remains the primary copy.
-         */
       }
 
       /* ----------------------------------------------------- */
-      /* 8. Save request status + Drive file ID                */
+      /* 8. UPDATE REQUEST                                    */
       /* ----------------------------------------------------- */
 
       const issuedPrice =
@@ -754,8 +698,7 @@ export default function Requests({
           pdf_path: pdfPath,
           generated_at:
             new Date().toISOString(),
-          issued_price:
-            issuedPrice,
+          issued_price: issuedPrice,
           drive_file_id:
             driveFileId,
         })
@@ -768,18 +711,20 @@ export default function Requests({
       }
 
       /* ----------------------------------------------------- */
-      /* 9. Final message                                     */
+      /* 9. RESULT                                             */
       /* ----------------------------------------------------- */
 
-      setMessage(
-        driveBackupError
-          ? `Pass generated successfully for ${request.guest_name}.`
-          : `Pass generated successfully for ${request.guest_name}. Google Drive backup completed.`
-      );
-
       if (driveBackupError) {
+        setMessage(
+          `Pass generated successfully for ${request.guest_name}.`
+        );
+
         setError(
           `Google Drive backup failed: ${driveBackupError}. The pass is still available through Supabase.`
+        );
+      } else {
+        setMessage(
+          `Pass generated successfully for ${request.guest_name}. Google Drive backup completed.`
         );
       }
 
@@ -805,7 +750,7 @@ export default function Requests({
   };
 
   /* ========================================================= */
-  /* MEMBER DOWNLOAD                                           */
+  /* MEMBER DOWNLOAD                                          */
   /* ========================================================= */
 
   const downloadGeneratedPass = async (
@@ -918,8 +863,7 @@ export default function Requests({
         code:
           profile?.member_code ||
           memberId.slice(0, 8),
-        requests:
-          memberRequests,
+        requests: memberRequests,
         count:
           memberRequests.length,
         money,
@@ -980,9 +924,7 @@ export default function Requests({
         </div>
       )}
 
-      {/* ===================================================== */}
-      {/* ADMIN SALES / ISSUANCE                               */}
-      {/* ===================================================== */}
+      {/* ADMIN */}
 
       {role === "admin" && (
         <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-6">
@@ -1000,8 +942,6 @@ export default function Requests({
               Track passes generated by each team member and total money collected.
             </p>
           </div>
-
-          {/* TOTAL CARDS */}
 
           <div className="grid gap-4 md:grid-cols-2">
 
@@ -1034,8 +974,6 @@ export default function Requests({
             </div>
 
           </div>
-
-          {/* MEMBER BREAKDOWN */}
 
           <div className="mt-6">
 
@@ -1110,9 +1048,7 @@ export default function Requests({
                                 </p>
 
                                 <p className="mt-1 text-lg font-semibold text-green-300">
-                                  {formatMoney(
-                                    member.money
-                                  )}
+                                  {formatMoney(member.money)}
                                 </p>
                               </div>
 
@@ -1127,26 +1063,18 @@ export default function Requests({
                           </div>
                         </button>
 
-                        {/* MEMBER DETAILS */}
-
                         {expanded && (
                           <div className="border-t border-white/10 p-4">
 
-                            <div className="mb-3 flex items-center justify-between">
+                            <div className="mb-3">
+                              <p className="text-sm font-semibold text-white">
+                                Issued Passes
+                              </p>
 
-                              <div>
-                                <p className="text-sm font-semibold text-white">
-                                  Issued Passes
-                                </p>
-
-                                <p className="text-xs text-slate-500">
-                                  {member.count} passes ·{" "}
-                                  {formatMoney(
-                                    member.money
-                                  )}
-                                </p>
-                              </div>
-
+                              <p className="text-xs text-slate-500">
+                                {member.count} passes ·{" "}
+                                {formatMoney(member.money)}
+                              </p>
                             </div>
 
                             <div className="space-y-2">
@@ -1225,8 +1153,6 @@ export default function Requests({
                   }
                 )}
 
-                {/* GRAND TOTAL */}
-
                 <div className="mt-4 rounded-xl border border-white/15 bg-white/[0.05] p-5">
 
                   <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
@@ -1259,9 +1185,7 @@ export default function Requests({
                         </p>
 
                         <p className="mt-1 text-2xl font-semibold text-green-300">
-                          {formatMoney(
-                            totalMoney
-                          )}
+                          {formatMoney(totalMoney)}
                         </p>
                       </div>
 
@@ -1270,7 +1194,6 @@ export default function Requests({
                   </div>
 
                 </div>
-
               </div>
             )}
 
@@ -1286,6 +1209,7 @@ export default function Requests({
           onSubmit={submitRequest}
           className="rounded-2xl border border-white/10 bg-white/[0.03] p-6"
         >
+
           <div className="mb-6">
             <h2 className="text-lg font-semibold text-white">
               Submit Guest
@@ -1306,9 +1230,7 @@ export default function Requests({
               <input
                 value={guestName}
                 onChange={(e) =>
-                  setGuestName(
-                    e.target.value
-                  )
+                  setGuestName(e.target.value)
                 }
                 placeholder="Enter guest name"
                 className="w-full rounded-xl border border-white/10 bg-black/30 px-4 py-3 text-white outline-none placeholder:text-slate-600 focus:border-white/30"
@@ -1323,12 +1245,10 @@ export default function Requests({
               <input
                 value={phone}
                 onChange={(e) =>
-                  setPhone(
-                    e.target.value
-                  )
+                  setPhone(e.target.value)
                 }
                 placeholder="Enter phone number"
-                className="w-full rounded-xl border border-white/10 bg-black/30 px-4 py-3 text-white outline-none placeholder:text-slate-600 focus:border-white/30"
+                className="w-full rounded-xl border border-white/10 bg-black/30 px-4 py-3 text-white outline-none placeholder:text-slate-600"
               />
             </div>
 
@@ -1340,23 +1260,19 @@ export default function Requests({
               <select
                 value={passType}
                 onChange={(e) =>
-                  setPassType(
-                    e.target.value
-                  )
+                  setPassType(e.target.value)
                 }
                 className="w-full rounded-xl border border-white/10 bg-black/30 px-4 py-3 text-white outline-none"
               >
-                {PASS_TYPES.map(
-                  (type) => (
-                    <option
-                      key={type}
-                      value={type}
-                      className="bg-black"
-                    >
-                      {type}
-                    </option>
-                  )
-                )}
+                {PASS_TYPES.map((type) => (
+                  <option
+                    key={type}
+                    value={type}
+                    className="bg-black"
+                  >
+                    {type}
+                  </option>
+                ))}
               </select>
             </div>
 
@@ -1368,9 +1284,7 @@ export default function Requests({
               <input
                 value={notes}
                 onChange={(e) =>
-                  setNotes(
-                    e.target.value
-                  )
+                  setNotes(e.target.value)
                 }
                 placeholder="Optional note"
                 className="w-full rounded-xl border border-white/10 bg-black/30 px-4 py-3 text-white outline-none placeholder:text-slate-600"
@@ -1393,9 +1307,7 @@ export default function Requests({
 
           <button
             type="submit"
-            disabled={
-              submitting || !event
-            }
+            disabled={submitting || !event}
             className="mt-6 rounded-xl bg-white px-6 py-3 text-sm font-semibold text-black transition hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {submitting
@@ -1457,154 +1369,150 @@ export default function Requests({
         ) : (
           <div className="space-y-3">
 
-            {requests.map(
-              (request) => (
-                <div
-                  key={request.id}
-                  className="rounded-xl border border-white/10 bg-black/20 p-4"
-                >
+            {requests.map((request) => (
+              <div
+                key={request.id}
+                className="rounded-xl border border-white/10 bg-black/20 p-4"
+              >
 
-                  <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
 
-                    <div>
+                  <div>
 
-                      <p className="font-medium text-white">
-                        {request.guest_name}
-                      </p>
+                    <p className="font-medium text-white">
+                      {request.guest_name}
+                    </p>
 
-                      <p className="mt-1 text-sm text-slate-400">
-                        {request.pass_type}
-                        {request.phone
-                          ? ` · ${request.phone}`
-                          : ""}
-                      </p>
+                    <p className="mt-1 text-sm text-slate-400">
+                      {request.pass_type}
+                      {request.phone
+                        ? ` · ${request.phone}`
+                        : ""}
+                    </p>
 
-                      {role === "admin" && (
-                        <p className="mt-1 text-xs text-slate-600">
-                          Submitted by:{" "}
-                          {readerProfile(
-                            request.submitted_by
-                          )?.full_name ||
-                            readerProfile(
-                              request.submitted_by
-                            )?.member_code ||
-                            request.submitted_by.slice(
-                              0,
-                              8
-                            )}
-                        </p>
-                      )}
-
+                    {role === "admin" && (
                       <p className="mt-1 text-xs text-slate-600">
-                        {new Date(
-                          request.created_at
-                        ).toLocaleString()}
+                        Submitted by:{" "}
+                        {readerProfile(
+                          request.submitted_by
+                        )?.full_name ||
+                          readerProfile(
+                            request.submitted_by
+                          )?.member_code ||
+                          request.submitted_by.slice(
+                            0,
+                            8
+                          )}
                       </p>
+                    )}
 
-                    </div>
-
-                    <div className="flex items-center gap-3">
-
-                      <span
-                        className={`w-fit rounded-full border px-3 py-1 text-xs font-medium ${
-                          request.status ===
-                          "generated"
-                            ? "border-green-500/20 bg-green-500/10 text-green-300"
-                            : request.status ===
-                              "rejected"
-                            ? "border-red-500/20 bg-red-500/10 text-red-300"
-                            : "border-yellow-500/20 bg-yellow-500/10 text-yellow-300"
-                        }`}
-                      >
-                        {request.status}
-                      </span>
-
-                      {/* ADMIN GENERATE */}
-
-                      {role === "admin" &&
-                        request.status ===
-                          "pending" && (
-                          <button
-                            onClick={() =>
-                              generatePassForRequest(
-                                request
-                              )
-                            }
-                            disabled={
-                              generatingId ===
-                              request.id
-                            }
-                            className="rounded-xl bg-white px-4 py-2 text-xs font-semibold text-black hover:bg-slate-200 disabled:opacity-50"
-                          >
-                            {generatingId ===
-                            request.id
-                              ? "Generating..."
-                              : "Generate"}
-                          </button>
-                        )}
-
-                      {/* MEMBER DOWNLOAD */}
-
-                      {role === "member" &&
-                        request.status ===
-                          "generated" &&
-                        request.pdf_path && (
-                          <button
-                            onClick={() =>
-                              downloadGeneratedPass(
-                                request
-                              )
-                            }
-                            className="rounded-xl bg-white px-4 py-2 text-xs font-semibold text-black hover:bg-slate-200"
-                          >
-                            Download PDF
-                          </button>
-                        )}
-
-                    </div>
+                    <p className="mt-1 text-xs text-slate-600">
+                      {new Date(
+                        request.created_at
+                      ).toLocaleString()}
+                    </p>
 
                   </div>
 
-                  {request.notes && (
-                    <p className="mt-3 border-t border-white/5 pt-3 text-sm text-slate-500">
-                      Note: {request.notes}
-                    </p>
-                  )}
+                  <div className="flex items-center gap-3">
 
-                  {role === "admin" &&
-                    request.status ===
-                      "generated" && (
-                      <div className="mt-3 flex items-center justify-between border-t border-white/5 pt-3">
+                    <span
+                      className={`w-fit rounded-full border px-3 py-1 text-xs font-medium ${
+                        request.status ===
+                        "generated"
+                          ? "border-green-500/20 bg-green-500/10 text-green-300"
+                          : request.status ===
+                            "rejected"
+                          ? "border-red-500/20 bg-red-500/10 text-red-300"
+                          : "border-yellow-500/20 bg-yellow-500/10 text-yellow-300"
+                      }`}
+                    >
+                      {request.status}
+                    </span>
 
-                        <div>
-                          <p className="text-xs text-green-400">
-                            Pass generated and delivered to the submitting member.
-                          </p>
-
-                          <p className="mt-1 text-[10px] text-slate-500">
-                            {request.drive_file_id
-                              ? "✓ Google Drive backup saved"
-                              : "⚠ Google Drive backup unavailable"}
-                          </p>
-                        </div>
-
-                        <p className="text-xs font-semibold text-slate-300">
-                          {formatMoney(
-                            Number(
-                              request.issued_price ??
-                                getPassPrice(
-                                  request.pass_type
-                                )
+                    {role === "admin" &&
+                      request.status ===
+                        "pending" && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            generatePassForRequest(
+                              request
                             )
-                          )}
-                        </p>
+                          }
+                          disabled={
+                            generatingId ===
+                            request.id
+                          }
+                          className="rounded-xl bg-white px-4 py-2 text-xs font-semibold text-black hover:bg-slate-200 disabled:opacity-50"
+                        >
+                          {generatingId ===
+                          request.id
+                            ? "Generating..."
+                            : "Generate"}
+                        </button>
+                      )}
 
-                      </div>
-                    )}
+                    {role === "member" &&
+                      request.status ===
+                        "generated" &&
+                      request.pdf_path && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            downloadGeneratedPass(
+                              request
+                            )
+                          }
+                          className="rounded-xl bg-white px-4 py-2 text-xs font-semibold text-black hover:bg-slate-200"
+                        >
+                          Download PDF
+                        </button>
+                      )}
+
+                  </div>
 
                 </div>
-              )
-            )}
+
+                {request.notes && (
+                  <p className="mt-3 border-t border-white/5 pt-3 text-sm text-slate-500">
+                    Note: {request.notes}
+                  </p>
+                )}
+
+                {role === "admin" &&
+                  request.status ===
+                    "generated" && (
+                    <div className="mt-3 flex items-center justify-between border-t border-white/5 pt-3">
+
+                      <div>
+                        <p className="text-xs text-green-400">
+                          Pass generated and delivered to the submitting member.
+                        </p>
+
+                        <p className="mt-1 text-[10px] text-slate-500">
+                          {request.drive_file_id
+                            ? "✓ Google Drive backup saved"
+                            : "⚠ Google Drive backup unavailable"}
+                        </p>
+                      </div>
+
+                      <p className="text-xs font-semibold text-slate-300">
+                        {formatMoney(
+                          Number(
+                            request.issued_price ??
+                              getPassPrice(
+                                request.pass_type
+                              )
+                          )
+                        )}
+                      </p>
+
+                    </div>
+                  )}
+
+              </div>
+            ))}
 
           </div>
         )}
@@ -1628,15 +1536,14 @@ export default function Requests({
         }}
       >
         <div ref={pdfRef}>
-          {pdfGuest &&
-            pdfEvent && (
-              <PassArtwork
-                guest={pdfGuest}
-                event={pdfEvent}
-                qrDataUrl={pdfQr}
-                bgVersion={pdfVersion}
-              />
-            )}
+          {pdfGuest && pdfEvent && (
+            <PassArtwork
+              guest={pdfGuest}
+              event={pdfEvent}
+              qrDataUrl={pdfQr}
+              bgVersion={pdfVersion}
+            />
+          )}
         </div>
       </div>
 
