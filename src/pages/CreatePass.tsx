@@ -1,9 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import QRCode from "qrcode";
 import html2canvas from "html2canvas";
 import { jsPDF } from "jspdf";
 
-import { supabase, EventRow, Guest } from "../lib/supabase";
+import { supabase } from "../lib/supabase";
+import type { EventRow, Guest } from "../lib/supabase";
+import {
+  PASS_BACKGROUND_URL,
+  generateQr,
+  newPassId,
+  newToken,
+} from "../lib/pass";
 import Icon from "../components/Icon";
 
 interface CreatePassProps {
@@ -12,6 +18,7 @@ interface CreatePassProps {
   onSelected: (event: EventRow) => void;
 }
 
+/* Must match the current guests.pass_type constraint */
 const PASS_TYPES = [
   "Regular",
   "Early Bird",
@@ -19,18 +26,55 @@ const PASS_TYPES = [
   "Surge Pass",
 ];
 
-function makePassId() {
-  const shortId = crypto
-    .randomUUID()
-    .replace(/-/g, "")
-    .slice(0, 8)
-    .toUpperCase();
+const sleep = (ms: number) =>
+  new Promise<void>((resolve) => setTimeout(resolve, ms));
 
-  return `VYRA-${shortId}`;
+/* Wait until the hidden pass has rendered for this guest */
+export async function waitForPass(
+  el: HTMLElement,
+  passId: string
+) {
+  for (let i = 0; i < 60; i++) {
+    if (el.textContent?.includes(passId)) {
+      return true;
+    }
+
+    await sleep(50);
+  }
+
+  return false;
 }
 
-function makeQrToken() {
-  return `VYRA-${crypto.randomUUID()}`;
+/* Wait until every image inside the pass has loaded */
+export async function waitForImages(el: HTMLElement) {
+  const imgs = Array.from(
+    el.querySelectorAll("img")
+  );
+
+  await Promise.all(
+    imgs.map((img) => {
+      if (
+        img.complete &&
+        img.naturalWidth > 0
+      ) {
+        return Promise.resolve();
+      }
+
+      return new Promise<void>((resolve) => {
+        img.addEventListener(
+          "load",
+          () => resolve(),
+          { once: true }
+        );
+
+        img.addEventListener(
+          "error",
+          () => resolve(),
+          { once: true }
+        );
+      });
+    })
+  );
 }
 
 function formatDate(date: string | null) {
@@ -59,7 +103,8 @@ function formatDate(date: string | null) {
     "DEC",
   ];
 
-  const monthName = months[Number(month) - 1] || month;
+  const monthName =
+    months[Number(month) - 1] || month;
 
   return `${day} ${monthName} ${year}`;
 }
@@ -81,6 +126,7 @@ function formatTime(time: string | null) {
   }
 
   const suffix = hour >= 12 ? "PM" : "AM";
+
   hour = hour % 12 || 12;
 
   return `${hour}:${minute} ${suffix}`;
@@ -98,12 +144,14 @@ interface PassArtworkProps {
   guest: Guest;
   event: EventRow;
   qrDataUrl: string;
+  bgVersion: number;
 }
 
-function PassArtwork({
+export function PassArtwork({
   guest,
   event,
   qrDataUrl,
+  bgVersion,
 }: PassArtworkProps) {
   return (
     <div
@@ -115,32 +163,28 @@ function PassArtwork({
         overflow: "hidden",
         background: "#050810",
         color: "#ffffff",
-        fontFamily: "Arial, Helvetica, sans-serif",
+        fontFamily:
+          "Arial, Helvetica, sans-serif",
       }}
     >
-      {/* =============================================================== */}
-      {/* BACKGROUND IMAGE                                                 */}
-      {/* =============================================================== */}
-<img
-  src={`/pass-background.jpg?v=${Date.now()}`}
-  alt=""
-  crossOrigin="anonymous"
-  style={{
-    position: "absolute",
-    inset: 0,
-    width: "100%",
-    height: "100%",
-    objectFit: "cover",
-    objectPosition: "center",
-    display: "block",
-    zIndex: 0,
-  }}
-/>
+      {/* BACKGROUND */}
+      <img
+        src={`${PASS_BACKGROUND_URL}?v=${bgVersion}`}
+        alt=""
+        crossOrigin="anonymous"
+        style={{
+          position: "absolute",
+          inset: 0,
+          width: "100%",
+          height: "100%",
+          objectFit: "cover",
+          objectPosition: "center",
+          display: "block",
+          zIndex: 0,
+        }}
+      />
 
-      {/* =============================================================== */}
-      {/* CINEMATIC OVERLAY                                                 */}
-      {/* =============================================================== */}
-
+      {/* CINEMATIC OVERLAY */}
       <div
         style={{
           position: "absolute",
@@ -152,10 +196,7 @@ function PassArtwork({
         }}
       />
 
-      {/* =============================================================== */}
-      {/* SOFT CENTER GLOW                                                  */}
-      {/* =============================================================== */}
-
+      {/* CENTER GLOW */}
       <div
         style={{
           position: "absolute",
@@ -167,16 +208,14 @@ function PassArtwork({
         }}
       />
 
-      {/* =============================================================== */}
-      {/* GOLD BORDER                                                       */}
-      {/* =============================================================== */}
-
+      {/* GOLD BORDER */}
       <div
         style={{
           position: "absolute",
           inset: 24,
           zIndex: 2,
-          border: "2px solid rgba(241,203,117,.90)",
+          border:
+            "2px solid rgba(241,203,117,.90)",
           borderRadius: 28,
           boxShadow:
             "0 0 20px rgba(241,203,117,.18), inset 0 0 35px rgba(0,0,0,.14)",
@@ -184,22 +223,20 @@ function PassArtwork({
         }}
       />
 
-      {/* Decorative inner border */}
+      {/* INNER BORDER */}
       <div
         style={{
           position: "absolute",
           inset: 37,
           zIndex: 2,
-          border: "1px solid rgba(255,244,210,.22)",
+          border:
+            "1px solid rgba(255,244,210,.22)",
           borderRadius: 21,
           pointerEvents: "none",
         }}
       />
 
-      {/* =============================================================== */}
-      {/* TOP BRAND                                                         */}
-      {/* =============================================================== */}
-
+      {/* TOP BRAND */}
       <div
         style={{
           position: "absolute",
@@ -218,7 +255,8 @@ function PassArtwork({
             fontWeight: 600,
             letterSpacing: 5,
             color: "#f5d98d",
-            textShadow: "0 2px 8px rgba(0,0,0,.65)",
+            textShadow:
+              "0 2px 8px rgba(0,0,0,.65)",
           }}
         >
           VYRA ENTERTAINMENT
@@ -228,8 +266,10 @@ function PassArtwork({
           style={{
             padding: "10px 18px",
             borderRadius: 25,
-            border: "1px solid rgba(245,213,135,.78)",
-            background: "rgba(2,7,14,.28)",
+            border:
+              "1px solid rgba(245,213,135,.78)",
+            background:
+              "rgba(2,7,14,.28)",
             fontSize: 12,
             letterSpacing: 3,
             color: "#fff3d2",
@@ -239,10 +279,7 @@ function PassArtwork({
         </div>
       </div>
 
-      {/* =============================================================== */}
-      {/* VYRA                                                             */}
-      {/* =============================================================== */}
-
+      {/* VYRA */}
       <div
         style={{
           position: "absolute",
@@ -255,7 +292,8 @@ function PassArtwork({
       >
         <div
           style={{
-            fontFamily: "Georgia, 'Times New Roman', serif",
+            fontFamily:
+              "Georgia, 'Times New Roman', serif",
             fontSize: 86,
             fontWeight: 500,
             letterSpacing: 7,
@@ -274,7 +312,8 @@ function PassArtwork({
             fontSize: 17,
             letterSpacing: 10,
             color: "#ffffff",
-            textShadow: "0 2px 8px rgba(0,0,0,.55)",
+            textShadow:
+              "0 2px 8px rgba(0,0,0,.55)",
           }}
         >
           ENTERTAINMENT
@@ -301,10 +340,7 @@ function PassArtwork({
         </div>
       </div>
 
-      {/* =============================================================== */}
-      {/* EVENT TITLE                                                       */}
-      {/* =============================================================== */}
-
+      {/* EVENT TITLE */}
       <div
         style={{
           position: "absolute",
@@ -320,7 +356,8 @@ function PassArtwork({
             fontSize: 15,
             letterSpacing: 7,
             color: "#f6e8c7",
-            textShadow: "0 2px 9px rgba(0,0,0,.65)",
+            textShadow:
+              "0 2px 9px rgba(0,0,0,.65)",
           }}
         >
           YOU ARE INVITED TO
@@ -329,7 +366,8 @@ function PassArtwork({
         <div
           style={{
             marginTop: 18,
-            fontFamily: "Georgia, 'Times New Roman', serif",
+            fontFamily:
+              "Georgia, 'Times New Roman', serif",
             fontSize: 67,
             lineHeight: 1,
             letterSpacing: 1,
@@ -348,15 +386,13 @@ function PassArtwork({
             width: 72,
             height: 2,
             background: "#f3cf78",
-            boxShadow: "0 0 12px rgba(243,207,120,.50)",
+            boxShadow:
+              "0 0 12px rgba(243,207,120,.50)",
           }}
         />
       </div>
 
-      {/* =============================================================== */}
-      {/* GUEST                                                             */}
-      {/* =============================================================== */}
-
+      {/* GUEST */}
       <div
         style={{
           position: "absolute",
@@ -366,9 +402,12 @@ function PassArtwork({
           zIndex: 4,
           padding: "17px 20px 21px",
           textAlign: "center",
-          borderTop: "1px solid rgba(241,203,117,.60)",
-          borderBottom: "1px solid rgba(241,203,117,.42)",
-          background: "rgba(2,7,14,.20)",
+          borderTop:
+            "1px solid rgba(241,203,117,.60)",
+          borderBottom:
+            "1px solid rgba(241,203,117,.42)",
+          background:
+            "rgba(2,7,14,.20)",
           borderRadius: 8,
         }}
       >
@@ -385,21 +424,20 @@ function PassArtwork({
         <div
           style={{
             marginTop: 9,
-            fontFamily: "Georgia, 'Times New Roman', serif",
+            fontFamily:
+              "Georgia, 'Times New Roman', serif",
             fontSize: 49,
             lineHeight: 1.12,
             color: "#fff8e9",
-            textShadow: "0 3px 13px rgba(0,0,0,.65)",
+            textShadow:
+              "0 3px 13px rgba(0,0,0,.65)",
           }}
         >
           {guest.name}
         </div>
       </div>
 
-      {/* =============================================================== */}
-      {/* EVENT INFO                                                       */}
-      {/* =============================================================== */}
-
+      {/* EVENT INFO */}
       <div
         style={{
           position: "absolute",
@@ -408,12 +446,16 @@ function PassArtwork({
           top: 715,
           zIndex: 4,
           display: "grid",
-          gridTemplateColumns: "1fr 1.25fr 1fr",
+          gridTemplateColumns:
+            "1fr 1.25fr 1fr",
           overflow: "hidden",
-          border: "1px solid rgba(242,205,123,.68)",
+          border:
+            "1px solid rgba(242,205,123,.68)",
           borderRadius: 22,
-          background: "rgba(2,7,14,.65)",
-          boxShadow: "0 15px 32px rgba(0,0,0,.25)",
+          background:
+            "rgba(2,7,14,.65)",
+          boxShadow:
+            "0 15px 32px rgba(0,0,0,.25)",
           backdropFilter: "blur(4px)",
         }}
       >
@@ -453,7 +495,8 @@ function PassArtwork({
           <div
             style={{
               marginTop: 7,
-              fontFamily: "Georgia, 'Times New Roman', serif",
+              fontFamily:
+                "Georgia, 'Times New Roman', serif",
               fontSize: 20,
               lineHeight: 1.15,
               color: "#ffffff",
@@ -500,7 +543,8 @@ function PassArtwork({
             style={{
               marginTop: 7,
               maxWidth: 260,
-              fontFamily: "Georgia, 'Times New Roman', serif",
+              fontFamily:
+                "Georgia, 'Times New Roman', serif",
               fontSize: 20,
               lineHeight: 1.15,
               color: "#ffffff",
@@ -544,7 +588,8 @@ function PassArtwork({
           <div
             style={{
               marginTop: 7,
-              fontFamily: "Georgia, 'Times New Roman', serif",
+              fontFamily:
+                "Georgia, 'Times New Roman', serif",
               fontSize: 20,
               color: "#ffffff",
             }}
@@ -554,10 +599,7 @@ function PassArtwork({
         </div>
       </div>
 
-      {/* =============================================================== */}
-      {/* QR CODE                                                          */}
-      {/* =============================================================== */}
-
+      {/* QR CODE */}
       <div
         style={{
           position: "absolute",
@@ -570,17 +612,23 @@ function PassArtwork({
       >
         <div
           style={{
-            display: "inline-flex",
+            boxSizing: "content-box",
+            display: "block",
+            width: 220,
+            height: 220,
             padding: 14,
+            margin: "0 auto",
             borderRadius: 19,
             background: "#ffffff",
-            border: "2px solid rgba(242,205,123,.95)",
+            border:
+              "2px solid rgba(242,205,123,.95)",
             boxShadow:
               "0 0 24px rgba(242,205,123,.30), 0 15px 28px rgba(0,0,0,.28)",
           }}
         >
-          {qrDataUrl && (
+          {qrDataUrl ? (
             <img
+              data-pass-qr="1"
               src={qrDataUrl}
               alt="Entry QR"
               style={{
@@ -589,6 +637,20 @@ function PassArtwork({
                 display: "block",
               }}
             />
+          ) : (
+            <div
+              style={{
+                width: 220,
+                height: 220,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                color: "#111111",
+                fontSize: 14,
+              }}
+            >
+              QR ERROR
+            </div>
           )}
         </div>
 
@@ -598,17 +660,15 @@ function PassArtwork({
             fontSize: 12,
             letterSpacing: 6,
             color: "#f2d27f",
-            textShadow: "0 2px 8px rgba(0,0,0,.65)",
+            textShadow:
+              "0 2px 8px rgba(0,0,0,.65)",
           }}
         >
           SCAN TO ENTER
         </div>
       </div>
 
-      {/* =============================================================== */}
-      {/* PASS ID                                                           */}
-      {/* =============================================================== */}
-
+      {/* PASS ID */}
       <div
         style={{
           position: "absolute",
@@ -625,9 +685,12 @@ function PassArtwork({
             minWidth: 320,
             padding: "13px 30px 15px",
             borderRadius: 17,
-            border: "1px solid rgba(242,205,123,.78)",
-            background: "rgba(2,7,14,.70)",
-            boxShadow: "0 12px 24px rgba(0,0,0,.22)",
+            border:
+              "1px solid rgba(242,205,123,.78)",
+            background:
+              "rgba(2,7,14,.70)",
+            boxShadow:
+              "0 12px 24px rgba(0,0,0,.22)",
           }}
         >
           <div
@@ -643,7 +706,8 @@ function PassArtwork({
           <div
             style={{
               marginTop: 6,
-              fontFamily: "Georgia, 'Times New Roman', serif",
+              fontFamily:
+                "Georgia, 'Times New Roman', serif",
               fontSize: 24,
               letterSpacing: 3,
               color: "#fff8e9",
@@ -654,10 +718,7 @@ function PassArtwork({
         </div>
       </div>
 
-      {/* =============================================================== */}
-      {/* FOOTER                                                            */}
-      {/* =============================================================== */}
-
+      {/* FOOTER */}
       <div
         style={{
           position: "absolute",
@@ -688,7 +749,8 @@ function PassArtwork({
 
           <div
             style={{
-              fontFamily: "Georgia, 'Times New Roman', serif",
+              fontFamily:
+                "Georgia, 'Times New Roman', serif",
               fontSize: 18,
               letterSpacing: 5,
               color: "#f2d27f",
@@ -732,12 +794,12 @@ export default function CreatePass({
   events,
   onSelected,
 }: CreatePassProps) {
-  const [selectedEventId, setSelectedEventId] = useState(
-    ev?.id || ""
-  );
+  const [selectedEventId, setSelectedEventId] =
+    useState(ev?.id || "");
 
   const [name, setName] = useState("");
-  const [passType, setPassType] = useState("Regular");
+  const [passType, setPassType] =
+    useState("Regular");
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -746,39 +808,66 @@ export default function CreatePass({
   const [generatedGuest, setGeneratedGuest] =
     useState<Guest | null>(null);
 
-  const [qrDataUrl, setQrDataUrl] = useState("");
+  const [qrDataUrl, setQrDataUrl] =
+    useState("");
 
-  const passRef = useRef<HTMLDivElement>(null);
+  const [bgVersion, setBgVersion] =
+    useState(() => Date.now());
 
-  /* --------------------------------------------------------------------- */
-  /* CURRENT EVENT                                                         */
-  /* --------------------------------------------------------------------- */
+  const passRef =
+    useRef<HTMLDivElement>(null);
 
   const selectedEvent = useMemo(() => {
     return (
       events.find(
-        (event) => event.id === selectedEventId
+        (event) =>
+          event.id === selectedEventId
       ) ||
       ev ||
       null
     );
-  }, [events, selectedEventId, ev]);
+  }, [
+    events,
+    selectedEventId,
+    ev,
+  ]);
+
+  const passEvent = useMemo(() => {
+    if (!generatedGuest) {
+      return selectedEvent;
+    }
+
+    return (
+      events.find(
+        (event) =>
+          event.id ===
+          generatedGuest.event_id
+      ) ||
+      selectedEvent
+    );
+  }, [
+    events,
+    generatedGuest,
+    selectedEvent,
+  ]);
 
   useEffect(() => {
     if (!selectedEventId && ev?.id) {
       setSelectedEventId(ev.id);
     }
-  }, [ev, selectedEventId]);
+  }, [
+    ev,
+    selectedEventId,
+  ]);
 
-  /* --------------------------------------------------------------------- */
-  /* SELECT EVENT                                                          */
-  /* --------------------------------------------------------------------- */
-
-  const handleEventChange = (eventId: string) => {
+  const handleEventChange = (
+    eventId: string
+  ) => {
     setSelectedEventId(eventId);
 
     const selected = events.find(
-      (event) => event.id === eventId
+      (event) =>
+        event.id === eventId
     );
 
     if (selected) {
@@ -787,138 +876,130 @@ export default function CreatePass({
   };
 
   /* --------------------------------------------------------------------- */
-  /* GENERATE PASS                                                         */
-  /* --------------------------------------------------------------------- */
-
-  const generatePass = async () => {
-    setError("");
-    setSuccess("");
-
-    const guestName = name.trim();
-
-    if (!guestName) {
-      setError("Enter the guest name.");
-      return;
-    }
-
-    if (!selectedEvent) {
-      setError("Select an event.");
-      return;
-    }
-
-    setLoading(true);
-
-    try {
-      const passId = makePassId();
-      const qrToken = makeQrToken();
-
-      /* Create guest in Supabase */
-      const { data, error: insertError } = await supabase
-        .from("guests")
-        .insert({
-          event_id: selectedEvent.id,
-          name: guestName,
-          phone: null,
-          pass_type: passType,
-          pass_id: passId,
-          qr_token: qrToken,
-          status: "valid",
-          notes: null,
-        })
-        .select("*")
-        .single();
-
-      if (insertError) {
-        throw new Error(insertError.message);
-      }
-
-      const guest = data as Guest;
-
-      /* Generate real QR */
-      const qr = await QRCode.toDataURL(qrToken, {
-        width: 500,
-        margin: 2,
-        errorCorrectionLevel: "H",
-        color: {
-          dark: "#111111",
-          light: "#ffffff",
-        },
-      });
-
-      setGeneratedGuest(guest);
-      setQrDataUrl(qr);
-      setSuccess(`Pass created for ${guestName}.`);
-
-      setName("");
-
-      /*
-       * Wait for React to render the pass before taking
-       * the screenshot for the PDF.
-       */
-      await new Promise<void>((resolve) => {
-        requestAnimationFrame(() => {
-          requestAnimationFrame(() => {
-            resolve();
-          });
-        });
-      });
-
-      await downloadPdf(guest, qr);
-    } catch (err) {
-      const message =
-        err instanceof Error
-          ? err.message
-          : "Failed to create pass.";
-
-      setError(message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  /* --------------------------------------------------------------------- */
-  /* DOWNLOAD PDF                                                          */
+  /* DOWNLOAD PDF                                                         */
   /* --------------------------------------------------------------------- */
 
   const downloadPdf = async (
-    guest: Guest = generatedGuest as Guest,
+    guest: Guest | null = generatedGuest,
     qr: string = qrDataUrl
   ) => {
-    if (!guest || !selectedEvent) {
+    if (!guest) {
+      setError(
+        "No pass is available to download."
+      );
       return;
     }
 
-    let element = passRef.current;
-
-    if (!element) {
-      await new Promise<void>((resolve) => {
-        requestAnimationFrame(() => resolve());
-      });
-
-      element = passRef.current;
+    if (!qr) {
+      setError(
+        "QR code was not generated."
+      );
+      return;
     }
 
+    /*
+     * Give React time to render the newly-created
+     * guest and QR into the hidden full-size pass.
+     */
+    for (
+      let i = 0;
+      i < 60 && !passRef.current;
+      i++
+    ) {
+      await sleep(50);
+    }
+
+    const element = passRef.current;
+
     if (!element) {
-      setError("Pass preview could not be prepared.");
+      setError(
+        "Pass preview could not be prepared."
+      );
       return;
     }
 
     try {
-      const canvas = await html2canvas(element, {
-        width: 1024,
-        height: 1536,
-        scale: 2,
-        useCORS: true,
-        allowTaint: false,
-        backgroundColor: "#050810",
-        logging: false,
-      });
+      const rendered =
+        await waitForPass(
+          element,
+          guest.pass_id
+        );
 
-      const image = canvas.toDataURL(
-        "image/jpeg",
-        0.96
-      );
+      if (!rendered) {
+        throw new Error(
+          "Pass did not finish rendering."
+        );
+      }
 
+      /*
+       * Make sure the QR image exists.
+       */
+      const qrImage =
+        element.querySelector(
+          'img[data-pass-qr="1"]'
+        ) as HTMLImageElement | null;
+
+      if (!qrImage) {
+        throw new Error(
+          "QR image was not found in the pass."
+        );
+      }
+
+      /*
+       * Wait until the QR image is actually loaded.
+       */
+      await waitForImages(element);
+
+      if (
+        !qrImage.complete ||
+        qrImage.naturalWidth === 0
+      ) {
+        throw new Error(
+          "QR image failed to load."
+        );
+      }
+
+      /*
+       * Small rendering delay.
+       */
+      await sleep(300);
+
+      /*
+       * IMPORTANT:
+       *
+       * We DO NOT hide the QR anymore.
+       *
+       * The QR that you see in the pass is now
+       * directly captured into the PDF canvas.
+       */
+      const canvas =
+        await html2canvas(
+          element,
+          {
+            width: 1024,
+            height: 1536,
+            scale: 2,
+            useCORS: true,
+            allowTaint: false,
+            backgroundColor:
+              "#050810",
+            logging: false,
+          }
+        );
+
+      /*
+       * Convert the complete pass artwork
+       * including the real QR into an image.
+       */
+      const image =
+        canvas.toDataURL(
+          "image/jpeg",
+          0.96
+        );
+
+      /*
+       * Create 2:3 portrait PDF.
+       */
       const pdf = new jsPDF({
         orientation: "portrait",
         unit: "pt",
@@ -926,6 +1007,13 @@ export default function CreatePass({
         compress: true,
       });
 
+      /*
+       * The QR is ALREADY inside this image.
+       *
+       * No second QR insertion.
+       * No hidden QR.
+       * No coordinate guessing.
+       */
       pdf.addImage(
         image,
         "JPEG",
@@ -937,20 +1025,177 @@ export default function CreatePass({
         "FAST"
       );
 
-      const safeName = guest.name
-        .replace(/[^a-z0-9]+/gi, "-")
-        .replace(/^-|-$/g, "");
+      const safeName =
+        guest.name
+          .replace(
+            /[^a-z0-9]+/gi,
+            "-"
+          )
+          .replace(
+            /^-|-$/g,
+            ""
+          );
 
       pdf.save(
         `${guest.pass_id}-${safeName}.pdf`
+      );
+
+      setSuccess(
+        `PDF downloaded for ${guest.name}.`
+      );
+    } catch (err) {
+      console.error(
+        "PDF generation error:",
+        err
+      );
+
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Could not create the PDF."
+      );
+    }
+  };
+
+  /* --------------------------------------------------------------------- */
+  /* GENERATE PASS                                                         */
+  /* --------------------------------------------------------------------- */
+
+  const generatePass = async () => {
+    setError("");
+    setSuccess("");
+
+    const guestName =
+      name.trim();
+
+    if (!guestName) {
+      setError(
+        "Enter the guest name."
+      );
+      return;
+    }
+
+    if (!selectedEvent) {
+      setError(
+        "Select an event."
+      );
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      /*
+       * Generate IDs BEFORE inserting.
+       *
+       * This guarantees the exact qr_token saved
+       * in Supabase is the exact token used to
+       * generate the QR.
+       */
+      const passId =
+        newPassId();
+
+      const token =
+        newToken();
+
+      const { data, error: insertError } =
+        await supabase
+          .from("guests")
+          .insert({
+            event_id:
+              selectedEvent.id,
+            name: guestName,
+            phone: null,
+            pass_type:
+              passType,
+            pass_id:
+              passId,
+            qr_token:
+              token,
+            status:
+              "valid",
+            notes: null,
+          })
+          .select("*")
+          .single();
+
+      if (insertError) {
+        throw new Error(
+          insertError.message
+        );
+      }
+
+      const guest =
+        data as Guest;
+
+      /*
+       * Generate QR from the EXACT token
+       * stored in Supabase.
+       */
+      const qr =
+        await generateQr(
+          guest.qr_token
+        );
+
+      if (
+        !qr ||
+        !qr.startsWith(
+          "data:image/"
+        )
+      ) {
+        throw new Error(
+          "QR code generation failed."
+        );
+      }
+
+      /*
+       * Update React state.
+       */
+      setBgVersion(
+        Date.now()
+      );
+
+      setGeneratedGuest(
+        guest
+      );
+
+      setQrDataUrl(
+        qr
+      );
+
+      setSuccess(
+        `Pass created for ${guestName}.`
+      );
+
+      setName("");
+
+      /*
+       * Wait for React to render the new
+       * guest + QR before generating PDF.
+       */
+      await sleep(150);
+
+      /*
+       * Generate PDF using the exact QR.
+       */
+      await downloadPdf(
+        guest,
+        qr
       );
     } catch (err) {
       const message =
         err instanceof Error
           ? err.message
-          : "Could not create the PDF.";
+          : "Failed to create pass.";
+
+      console.error(
+        "Pass generation error:",
+        err
+      );
 
       setError(message);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -959,14 +1204,20 @@ export default function CreatePass({
   /* ========================================================================= */
 
   return (
-    <div style={{ paddingBottom: 45 }}>
+    <div
+      style={{
+        paddingBottom: 45,
+      }}
+    >
       {/* HEADER */}
+
       <div
         style={{
           marginBottom: 24,
           display: "flex",
           alignItems: "flex-end",
-          justifyContent: "space-between",
+          justifyContent:
+            "space-between",
           gap: 20,
           flexWrap: "wrap",
         }}
@@ -978,7 +1229,8 @@ export default function CreatePass({
               fontSize: 11,
               color: "var(--text3)",
               letterSpacing: 3,
-              textTransform: "uppercase",
+              textTransform:
+                "uppercase",
             }}
           >
             VYRA ENTERTAINMENT
@@ -1003,12 +1255,14 @@ export default function CreatePass({
               color: "var(--text2)",
             }}
           >
-            Generate a unique luxury entry pass.
+            Generate a unique luxury
+            entry pass.
           </div>
         </div>
       </div>
 
       {/* FORM CARD */}
+
       <div
         className="card"
         style={{
@@ -1025,6 +1279,7 @@ export default function CreatePass({
           }}
         >
           {/* EVENT */}
+
           <div>
             <label
               style={{
@@ -1033,25 +1288,35 @@ export default function CreatePass({
                 fontSize: 11,
                 color: "var(--text3)",
                 letterSpacing: 1.2,
-                textTransform: "uppercase",
+                textTransform:
+                  "uppercase",
               }}
             >
               Event
             </label>
 
             <select
-              value={selectedEventId}
+              value={
+                selectedEventId
+              }
               onChange={(e) =>
-                handleEventChange(e.target.value)
+                handleEventChange(
+                  e.target.value
+                )
               }
               style={{
                 width: "100%",
-                boxSizing: "border-box",
-                padding: "13px 14px",
+                boxSizing:
+                  "border-box",
+                padding:
+                  "13px 14px",
                 borderRadius: 10,
-                border: "1px solid var(--hair)",
-                background: "var(--panel2)",
-                color: "var(--text)",
+                border:
+                  "1px solid var(--hair)",
+                background:
+                  "var(--panel2)",
+                color:
+                  "var(--text)",
                 outline: "none",
               }}
             >
@@ -1059,18 +1324,21 @@ export default function CreatePass({
                 Select event
               </option>
 
-              {events.map((event) => (
-                <option
-                  key={event.id}
-                  value={event.id}
-                >
-                  {event.name}
-                </option>
-              ))}
+              {events.map(
+                (event) => (
+                  <option
+                    key={event.id}
+                    value={event.id}
+                  >
+                    {event.name}
+                  </option>
+                )
+              )}
             </select>
           </div>
 
           {/* GUEST NAME */}
+
           <div>
             <label
               style={{
@@ -1079,7 +1347,8 @@ export default function CreatePass({
                 fontSize: 11,
                 color: "var(--text3)",
                 letterSpacing: 1.2,
-                textTransform: "uppercase",
+                textTransform:
+                  "uppercase",
               }}
             >
               Guest Name
@@ -1088,28 +1357,38 @@ export default function CreatePass({
             <input
               value={name}
               onChange={(e) =>
-                setName(e.target.value)
+                setName(
+                  e.target.value
+                )
               }
               onKeyDown={(e) => {
-                if (e.key === "Enter") {
+                if (
+                  e.key === "Enter"
+                ) {
                   generatePass();
                 }
               }}
               placeholder="Enter guest name"
               style={{
                 width: "100%",
-                boxSizing: "border-box",
-                padding: "13px 14px",
+                boxSizing:
+                  "border-box",
+                padding:
+                  "13px 14px",
                 borderRadius: 10,
-                border: "1px solid var(--hair)",
-                background: "var(--panel2)",
-                color: "var(--text)",
+                border:
+                  "1px solid var(--hair)",
+                background:
+                  "var(--panel2)",
+                color:
+                  "var(--text)",
                 outline: "none",
               }}
             />
           </div>
 
           {/* PASS CATEGORY */}
+
           <div>
             <label
               style={{
@@ -1118,7 +1397,8 @@ export default function CreatePass({
                 fontSize: 11,
                 color: "var(--text3)",
                 letterSpacing: 1.2,
-                textTransform: "uppercase",
+                textTransform:
+                  "uppercase",
               }}
             >
               Pass Category
@@ -1127,32 +1407,42 @@ export default function CreatePass({
             <select
               value={passType}
               onChange={(e) =>
-                setPassType(e.target.value)
+                setPassType(
+                  e.target.value
+                )
               }
               style={{
                 width: "100%",
-                boxSizing: "border-box",
-                padding: "13px 14px",
+                boxSizing:
+                  "border-box",
+                padding:
+                  "13px 14px",
                 borderRadius: 10,
-                border: "1px solid var(--hair)",
-                background: "var(--panel2)",
-                color: "var(--text)",
+                border:
+                  "1px solid var(--hair)",
+                background:
+                  "var(--panel2)",
+                color:
+                  "var(--text)",
                 outline: "none",
               }}
             >
-              {PASS_TYPES.map((type) => (
-                <option
-                  key={type}
-                  value={type}
-                >
-                  {type}
-                </option>
-              ))}
+              {PASS_TYPES.map(
+                (type) => (
+                  <option
+                    key={type}
+                    value={type}
+                  >
+                    {type}
+                  </option>
+                )
+              )}
             </select>
           </div>
         </div>
 
         {/* SELECTED EVENT DETAILS */}
+
         {selectedEvent && (
           <div
             style={{
@@ -1162,14 +1452,20 @@ export default function CreatePass({
               gap: 22,
               flexWrap: "wrap",
               borderRadius: 12,
-              border: "1px solid var(--hair)",
+              border:
+                "1px solid var(--hair)",
               background:
                 "rgba(255,255,255,.025)",
               fontSize: 12,
             }}
           >
             <div>
-              <span style={{ color: "var(--text3)" }}>
+              <span
+                style={{
+                  color:
+                    "var(--text3)",
+                }}
+              >
                 EVENT{" "}
               </span>
               <strong>
@@ -1178,40 +1474,63 @@ export default function CreatePass({
             </div>
 
             <div>
-              <span style={{ color: "var(--text3)" }}>
+              <span
+                style={{
+                  color:
+                    "var(--text3)",
+                }}
+              >
                 DATE{" "}
               </span>
               <strong>
-                {formatDate(selectedEvent.date)}
+                {formatDate(
+                  selectedEvent.date
+                )}
               </strong>
             </div>
 
             <div>
-              <span style={{ color: "var(--text3)" }}>
+              <span
+                style={{
+                  color:
+                    "var(--text3)",
+                }}
+              >
                 TIME{" "}
               </span>
               <strong>
-                {formatTime(selectedEvent.time)}
+                {formatTime(
+                  selectedEvent.time
+                )}
               </strong>
             </div>
 
             <div>
-              <span style={{ color: "var(--text3)" }}>
+              <span
+                style={{
+                  color:
+                    "var(--text3)",
+                }}
+              >
                 VENUE{" "}
               </span>
               <strong>
-                {venueText(selectedEvent.venue)}
+                {venueText(
+                  selectedEvent.venue
+                )}
               </strong>
             </div>
           </div>
         )}
 
         {/* GENERATE BUTTON */}
+
         <div
           style={{
             marginTop: 20,
             display: "flex",
-            justifyContent: "flex-end",
+            justifyContent:
+              "flex-end",
           }}
         >
           <button
@@ -1221,8 +1540,10 @@ export default function CreatePass({
             style={{
               minWidth: 190,
               display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
+              alignItems:
+                "center",
+              justifyContent:
+                "center",
               gap: 9,
             }}
           >
@@ -1233,6 +1554,7 @@ export default function CreatePass({
         </div>
 
         {/* ERROR */}
+
         {error && (
           <div
             style={{
@@ -1245,6 +1567,8 @@ export default function CreatePass({
                 "rgba(239,68,68,.08)",
               color: "#ffabab",
               fontSize: 12,
+              wordBreak:
+                "break-word",
             }}
           >
             {error}
@@ -1252,6 +1576,7 @@ export default function CreatePass({
         )}
 
         {/* SUCCESS */}
+
         {success && (
           <div
             style={{
@@ -1271,132 +1596,152 @@ export default function CreatePass({
         )}
       </div>
 
-      {/* ================================================================= */
-      /* GENERATED PASS                                                    */
-      /* ================================================================= */}
+      {/* GENERATED PASS */}
 
-      {generatedGuest && selectedEvent && (
-        <div
-          className="card"
-          style={{
-            padding: 24,
-            textAlign: "center",
-          }}
-        >
-          {/* PREVIEW HEADER */}
+      {generatedGuest &&
+        passEvent && (
           <div
+            className="card"
             style={{
-              marginBottom: 20,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              gap: 20,
-              flexWrap: "wrap",
+              padding: 24,
+              textAlign: "center",
             }}
           >
+            {/* PREVIEW HEADER */}
+
             <div
               style={{
-                textAlign: "left",
-              }}
-            >
-              <div
-                style={{
-                  fontSize: 10,
-                  color: "var(--text3)",
-                  letterSpacing: 2,
-                  textTransform: "uppercase",
-                }}
-              >
-                Generated Pass
-              </div>
-
-              <div
-                style={{
-                  marginTop: 5,
-                  fontSize: 15,
-                  fontWeight: 700,
-                }}
-              >
-                {generatedGuest.name}
-              </div>
-
-              <div
-                style={{
-                  marginTop: 4,
-                  fontSize: 12,
-                  color: "var(--text3)",
-                }}
-              >
-                {generatedGuest.pass_id}
-              </div>
-            </div>
-
-            <button
-              className="btn"
-              onClick={() =>
-                downloadPdf(
-                  generatedGuest,
-                  qrDataUrl
-                )
-              }
-              style={{
+                marginBottom: 20,
                 display: "flex",
-                alignItems: "center",
-                gap: 8,
-              }}
-            >
-              <Icon
-                name="download"
-                size={15}
-              />
-              Download PDF
-            </button>
-          </div>
-
-          {/* PASS PREVIEW */}
-          <div
-            style={{
-              width: "100%",
-              overflow: "auto",
-              display: "flex",
-              justifyContent: "center",
-              paddingBottom: 15,
-            }}
-          >
-            <div
-              style={{
-                width: 430,
-                height: 645,
-                overflow: "hidden",
-                borderRadius: 18,
-                boxShadow:
-                  "0 25px 75px rgba(0,0,0,.48), 0 0 35px rgba(230,190,92,.10)",
+                alignItems:
+                  "center",
+                justifyContent:
+                  "space-between",
+                gap: 20,
+                flexWrap: "wrap",
               }}
             >
               <div
                 style={{
-                  width: 1024,
-                  height: 1536,
-                  transform:
-                    "scale(0.419921875)",
-                  transformOrigin:
-                    "top left",
+                  textAlign:
+                    "left",
                 }}
               >
-                <PassArtwork
-                  guest={generatedGuest}
-                  event={selectedEvent}
-                  qrDataUrl={qrDataUrl}
+                <div
+                  style={{
+                    fontSize: 10,
+                    color:
+                      "var(--text3)",
+                    letterSpacing: 2,
+                    textTransform:
+                      "uppercase",
+                  }}
+                >
+                  Generated Pass
+                </div>
+
+                <div
+                  style={{
+                    marginTop: 5,
+                    fontSize: 15,
+                    fontWeight: 700,
+                  }}
+                >
+                  {
+                    generatedGuest.name
+                  }
+                </div>
+
+                <div
+                  style={{
+                    marginTop: 4,
+                    fontSize: 12,
+                    color:
+                      "var(--text3)",
+                  }}
+                >
+                  {
+                    generatedGuest.pass_id
+                  }
+                </div>
+              </div>
+
+              <button
+                className="btn"
+                onClick={() =>
+                  downloadPdf(
+                    generatedGuest,
+                    qrDataUrl
+                  )
+                }
+                style={{
+                  display: "flex",
+                  alignItems:
+                    "center",
+                  gap: 8,
+                }}
+              >
+                <Icon
+                  name="download"
+                  size={15}
                 />
+                Download PDF
+              </button>
+            </div>
+
+            {/* PASS PREVIEW */}
+
+            <div
+              style={{
+                width: "100%",
+                overflow: "auto",
+                display: "flex",
+                justifyContent:
+                  "center",
+                paddingBottom: 15,
+              }}
+            >
+              <div
+                style={{
+                  width: 430,
+                  height: 645,
+                  overflow: "hidden",
+                  borderRadius: 18,
+                  boxShadow:
+                    "0 25px 75px rgba(0,0,0,.48), 0 0 35px rgba(230,190,92,.10)",
+                }}
+              >
+                <div
+                  style={{
+                    width: 1024,
+                    height: 1536,
+                    transform:
+                      "scale(0.419921875)",
+                    transformOrigin:
+                      "top left",
+                  }}
+                >
+                  <PassArtwork
+                    guest={
+                      generatedGuest
+                    }
+                    event={
+                      passEvent
+                    }
+                    qrDataUrl={
+                      qrDataUrl
+                    }
+                    bgVersion={
+                      bgVersion
+                    }
+                  />
+                </div>
               </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
 
-      {/* ================================================================= */
-      /* HIDDEN FULL-SIZE PASS USED FOR PDF                                */
-      /* ================================================================= */}
+      {/* HIDDEN FULL-SIZE PASS USED FOR PDF */}
 
       <div
         style={{
@@ -1406,17 +1751,27 @@ export default function CreatePass({
           width: 1024,
           height: 1536,
           overflow: "hidden",
-          pointerEvents: "none",
+          pointerEvents:
+            "none",
           opacity: 1,
         }}
       >
         <div ref={passRef}>
           {generatedGuest &&
-            selectedEvent && (
+            passEvent && (
               <PassArtwork
-                guest={generatedGuest}
-                event={selectedEvent}
-                qrDataUrl={qrDataUrl}
+                guest={
+                  generatedGuest
+                }
+                event={
+                  passEvent
+                }
+                qrDataUrl={
+                  qrDataUrl
+                }
+                bgVersion={
+                  bgVersion
+                }
               />
             )}
         </div>

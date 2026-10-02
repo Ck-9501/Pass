@@ -2,83 +2,91 @@ import QRCode from "qrcode";
 import { jsPDF } from "jspdf";
 import type { EventRow, Guest } from "./supabase";
 
-/* ========================================================================= */
-/* BACKGROUND                                                                */
-/* ========================================================================= */
+/* ============================================================
+   SINGLE SOURCE OF TRUTH
+   ============================================================ */
 
-export const PASS_BACKGROUND_URL =
-  "/pass-background.jpg";
+export const PASS_BACKGROUND_URL = "/pass-background.jpg";
 
-function getBackgroundUrl() {
-  return `${PASS_BACKGROUND_URL}?v=${Date.now()}`;
-}
-
-/* ========================================================================= */
-/* PASS ID / TOKEN                                                           */
-/* ========================================================================= */
+/* ============================================================
+   IDS
+   ============================================================ */
 
 const CHARS =
   "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
-function randomChars(length: number) {
+function randomString(length: number) {
   const bytes = crypto.getRandomValues(
     new Uint8Array(length)
   );
 
   return Array.from(
     bytes,
-    (byte) =>
-      CHARS[byte % CHARS.length]
+    (byte) => CHARS[byte % CHARS.length]
   ).join("");
 }
 
 export const newPassId = () =>
-  `VYRA-${randomChars(8)}`;
+  `VYRA-${randomString(8)}`;
 
 export const newToken = () =>
-  Array.from(
-    crypto.getRandomValues(
-      new Uint8Array(24)
-    ),
-    (byte) =>
-      byte
-        .toString(16)
-        .padStart(2, "0")
-  ).join("");
+  `VYRA-${crypto.randomUUID()}`;
 
-/* ========================================================================= */
-/* QR                                                                        */
-/* ========================================================================= */
+/* ============================================================
+   QR CONTENT
+   ============================================================ */
 
-export const verifyUrl = (
-  token: string
-) =>
-  `${import.meta.env.VITE_PUBLIC_URL || location.origin}/verify/${token}`;
+export function getPublicUrl() {
+  const configured =
+    String(
+      import.meta.env.VITE_PUBLIC_URL || ""
+    ).trim();
 
-export async function createQr(
+  return (
+    configured ||
+    window.location.origin
+  ).replace(/\/$/, "");
+}
+
+export function buildVerifyUrl(
   token: string
 ) {
+  return `${getPublicUrl()}/verify/${encodeURIComponent(
+    token
+  )}`;
+}
+
+/* ============================================================
+   QR IMAGE
+   ============================================================ */
+
+export async function generateQr(
+  token: string
+) {
+  const value =
+    buildVerifyUrl(token);
+
   return QRCode.toDataURL(
-    verifyUrl(token),
+    value,
     {
-      width: 800,
-      margin: 1,
+      type: "image/png",
+      width: 1200,
+      margin: 4,
       errorCorrectionLevel: "H",
       color: {
-        dark: "#101010",
+        dark: "#000000",
         light: "#FFFFFF",
       },
     }
   );
 }
 
-export const qrDataUrl = (
-  token: string
-) => createQr(token);
+/* Keep compatibility with older code */
+export const qrDataUrl = generateQr;
 
-/* ========================================================================= */
-/* IMAGE LOADER                                                              */
-/* ========================================================================= */
+/* ============================================================
+   HELPERS
+   ============================================================ */
 
 function loadImage(
   src: string
@@ -95,7 +103,7 @@ function loadImage(
       img.onerror = () =>
         reject(
           new Error(
-            `Unable to load pass background: ${src}`
+            `Could not load ${src}`
           )
         );
 
@@ -104,19 +112,14 @@ function loadImage(
   );
 }
 
-/* ========================================================================= */
-/* HELPERS                                                                   */
-/* ========================================================================= */
-
 function formatDate(
   date: string | null
 ) {
   if (!date) return "TBA";
 
-  const parts =
-    date.split("-");
+  const p = date.split("-");
 
-  if (parts.length !== 3) {
+  if (p.length !== 3) {
     return date;
   }
 
@@ -124,7 +127,7 @@ function formatDate(
     year,
     month,
     day,
-  ] = parts;
+  ] = p;
 
   const months = [
     "JAN",
@@ -151,22 +154,21 @@ function formatTime(
 ) {
   if (!time) return "TBA";
 
-  const parts =
-    time.split(":");
+  const p = time.split(":");
 
-  if (parts.length < 2) {
+  if (p.length < 2) {
     return time;
   }
 
   let hour =
-    Number(parts[0]);
+    Number(p[0]);
 
   if (Number.isNaN(hour)) {
     return time;
   }
 
   const minute =
-    parts[1];
+    p[1];
 
   const suffix =
     hour >= 12 ? "PM" : "AM";
@@ -175,29 +177,6 @@ function formatTime(
     hour % 12 || 12;
 
   return `${hour}:${minute} ${suffix}`;
-}
-
-function fitFont(
-  pdf: jsPDF,
-  text: string,
-  maxWidth: number,
-  startSize: number
-) {
-  let size =
-    startSize;
-
-  pdf.setFontSize(size);
-
-  while (
-    pdf.getTextWidth(text) >
-      maxWidth &&
-    size > 6
-  ) {
-    size -= 0.5;
-    pdf.setFontSize(size);
-  }
-
-  return size;
 }
 
 function centerText(
@@ -216,9 +195,36 @@ function centerText(
   );
 }
 
-/* ========================================================================= */
-/* DOWNLOAD PASS                                                             */
-/* ========================================================================= */
+function fitFont(
+  pdf: jsPDF,
+  text: string,
+  maxWidth: number,
+  startSize: number
+) {
+  let size =
+    startSize;
+
+  pdf.setFontSize(
+    size
+  );
+
+  while (
+    pdf.getTextWidth(text) >
+      maxWidth &&
+    size > 5
+  ) {
+    size -= 0.5;
+    pdf.setFontSize(
+      size
+    );
+  }
+
+  return size;
+}
+
+/* ============================================================
+   PDF
+   ============================================================ */
 
 export async function downloadPdf(
   guest: Guest,
@@ -232,64 +238,40 @@ export async function downloadPdf(
       compress: true,
     });
 
-  /* ======================================================================= */
-  /* COLORS                                                                  */
-  /* ======================================================================= */
+  const GOLD =
+    [255, 213, 108];
 
-  const GOLD = [
-    255,
-    213,
-    108,
-  ];
+  const LIGHT_GOLD =
+    [255, 228, 160];
 
-  const LIGHT_GOLD = [
-    255,
-    229,
-    164,
-  ];
+  const WHITE =
+    [255, 255, 255];
 
-  const IVORY = [
-    255,
-    251,
-    242,
-  ];
+  const IVORY =
+    [255, 249, 236];
 
-  const WHITE = [
-    255,
-    255,
-    255,
-  ];
+  const DARK =
+    [4, 8, 16];
 
-  const DARK = [
-    3,
-    7,
-    15,
-  ];
-
-  /* ======================================================================= */
-  /* BACKGROUND IMAGE                                                        */
-  /* ======================================================================= */
+  /* ==========================================================
+     BACKGROUND
+     ========================================================== */
 
   try {
-    const background =
+    const bg =
       await loadImage(
-        getBackgroundUrl()
+        `${PASS_BACKGROUND_URL}?v=${Date.now()}`
       );
 
     pdf.addImage(
-      background,
+      bg,
       "JPEG",
       0,
       0,
       100,
       160
     );
-  } catch (error) {
-    console.error(
-      "Unable to load pass background:",
-      error
-    );
-
+  } catch {
     pdf.setFillColor(
       DARK[0],
       DARK[1],
@@ -305,9 +287,9 @@ export async function downloadPdf(
     );
   }
 
-  /* ======================================================================= */
-  /* TOP CINEMATIC DARK PANEL                                                */
-  /* ======================================================================= */
+  /* ==========================================================
+     DARK READABILITY AREAS
+     ========================================================== */
 
   pdf.setFillColor(
     DARK[0],
@@ -337,10 +319,6 @@ export async function downloadPdf(
     })
   );
 
-  /* ======================================================================= */
-  /* MIDDLE TEXT PANEL                                                       */
-  /* ======================================================================= */
-
   pdf.setFillColor(
     DARK[0],
     DARK[1],
@@ -349,7 +327,7 @@ export async function downloadPdf(
 
   pdf.setGState(
     new (pdf as any).GState({
-      opacity: 0.58,
+      opacity: 0.60,
     })
   );
 
@@ -369,10 +347,6 @@ export async function downloadPdf(
     })
   );
 
-  /* ======================================================================= */
-  /* EVENT INFORMATION PANEL                                                 */
-  /* ======================================================================= */
-
   pdf.setFillColor(
     DARK[0],
     DARK[1],
@@ -381,7 +355,7 @@ export async function downloadPdf(
 
   pdf.setGState(
     new (pdf as any).GState({
-      opacity: 0.76,
+      opacity: 0.82,
     })
   );
 
@@ -401,41 +375,9 @@ export async function downloadPdf(
     })
   );
 
-  /* ======================================================================= */
-  /* LOWER PANEL                                                             */
-  /* ======================================================================= */
-
-  pdf.setFillColor(
-    DARK[0],
-    DARK[1],
-    DARK[2]
-  );
-
-  pdf.setGState(
-    new (pdf as any).GState({
-      opacity: 0.74,
-    })
-  );
-
-  pdf.roundedRect(
-    7,
-    117,
-    86,
-    39,
-    5,
-    5,
-    "F"
-  );
-
-  pdf.setGState(
-    new (pdf as any).GState({
-      opacity: 1,
-    })
-  );
-
-  /* ======================================================================= */
-  /* GOLD BORDER                                                              */
-  /* ======================================================================= */
+  /* ==========================================================
+     BORDER
+     ========================================================== */
 
   pdf.setDrawColor(
     GOLD[0],
@@ -477,14 +419,30 @@ export async function downloadPdf(
     "S"
   );
 
-  /* ======================================================================= */
-  /* TOP BRAND                                                                */
-  /* ======================================================================= */
+  /* ==========================================================
+     VYRA TOP
+     ========================================================== */
 
   pdf.setTextColor(
-    LIGHT_GOLD[0],
-    LIGHT_GOLD[1],
-    LIGHT_GOLD[2]
+    IVORY[0],
+    IVORY[1],
+    IVORY[2]
+  );
+
+  pdf.setFont(
+    "times",
+    "bold"
+  );
+
+  pdf.setFontSize(
+    28
+  );
+
+  centerText(
+    pdf,
+    "VYRA",
+    50,
+    23
   );
 
   pdf.setFont(
@@ -493,27 +451,52 @@ export async function downloadPdf(
   );
 
   pdf.setFontSize(
-    5.1
+    4.1
   );
 
   pdf.setCharSpace(
-    1.0
+    2.2
   );
 
   centerText(
     pdf,
-    "VYRA ENTERTAINMENT",
+    "ENTERTAINMENT",
     50,
-    11.5
+    28.5
   );
 
   pdf.setCharSpace(
     0
   );
 
-  /* ======================================================================= */
-  /* ENTRY PASS                                                               */
-  /* ======================================================================= */
+  pdf.setTextColor(
+    GOLD[0],
+    GOLD[1],
+    GOLD[2]
+  );
+
+  pdf.setFontSize(
+    2.7
+  );
+
+  pdf.setCharSpace(
+    1.4
+  );
+
+  centerText(
+    pdf,
+    "BEYOND THE ORDINARY",
+    50,
+    34
+  );
+
+  pdf.setCharSpace(
+    0
+  );
+
+  /* ==========================================================
+     ENTRY PASS
+     ========================================================== */
 
   pdf.setDrawColor(
     GOLD[0],
@@ -526,9 +509,9 @@ export async function downloadPdf(
   );
 
   pdf.roundedRect(
-    71.5,
+    71,
     7,
-    22,
+    23,
     8,
     4,
     4,
@@ -547,11 +530,11 @@ export async function downloadPdf(
   );
 
   pdf.setFontSize(
-    3.7
+    3.6
   );
 
   pdf.setCharSpace(
-    0.6
+    0.7
   );
 
   centerText(
@@ -565,106 +548,9 @@ export async function downloadPdf(
     0
   );
 
-  /* ======================================================================= */
-  /* VYRA                                                                      */
-  /* ======================================================================= */
-
-  pdf.setTextColor(
-    IVORY[0],
-    IVORY[1],
-    IVORY[2]
-  );
-
-  pdf.setFont(
-    "times",
-    "bold"
-  );
-
-  pdf.setFontSize(
-    29
-  );
-
-  centerText(
-    pdf,
-    "VYRA",
-    50,
-    24
-  );
-
-  pdf.setFont(
-    "helvetica",
-    "bold"
-  );
-
-  pdf.setFontSize(
-    4.3
-  );
-
-  pdf.setCharSpace(
-    2.5
-  );
-
-  centerText(
-    pdf,
-    "ENTERTAINMENT",
-    50,
-    29.2
-  );
-
-  pdf.setCharSpace(
-    0
-  );
-
-  pdf.setDrawColor(
-    GOLD[0],
-    GOLD[1],
-    GOLD[2]
-  );
-
-  pdf.setLineWidth(
-    0.25
-  );
-
-  pdf.line(
-    34,
-    31.7,
-    66,
-    31.7
-  );
-
-  pdf.setTextColor(
-    GOLD[0],
-    GOLD[1],
-    GOLD[2]
-  );
-
-  pdf.setFont(
-    "helvetica",
-    "bold"
-  );
-
-  pdf.setFontSize(
-    2.8
-  );
-
-  pdf.setCharSpace(
-    1.5
-  );
-
-  centerText(
-    pdf,
-    "BEYOND THE ORDINARY",
-    50,
-    35
-  );
-
-  pdf.setCharSpace(
-    0
-  );
-
-  /* ======================================================================= */
-  /* INVITATION                                                               */
-  /* ======================================================================= */
+  /* ==========================================================
+     INVITATION
+     ========================================================== */
 
   pdf.setTextColor(
     LIGHT_GOLD[0],
@@ -678,11 +564,11 @@ export async function downloadPdf(
   );
 
   pdf.setFontSize(
-    4.7
+    4.8
   );
 
   pdf.setCharSpace(
-    1.2
+    1.15
   );
 
   centerText(
@@ -696,9 +582,9 @@ export async function downloadPdf(
     0
   );
 
-  /* ======================================================================= */
-  /* EVENT TITLE                                                              */
-  /* ======================================================================= */
+  /* ==========================================================
+     EVENT NAME
+     ========================================================== */
 
   let eventName =
     event.name?.trim() ||
@@ -743,15 +629,15 @@ export async function downloadPdf(
   );
 
   pdf.line(
-    44.5,
+    44,
     58,
-    55.5,
+    56,
     58
   );
 
-  /* ======================================================================= */
-  /* GUEST LABEL                                                              */
-  /* ======================================================================= */
+  /* ==========================================================
+     GUEST
+     ========================================================== */
 
   pdf.setTextColor(
     GOLD[0],
@@ -769,7 +655,7 @@ export async function downloadPdf(
   );
 
   pdf.setCharSpace(
-    1.5
+    1.4
   );
 
   centerText(
@@ -782,10 +668,6 @@ export async function downloadPdf(
   pdf.setCharSpace(
     0
   );
-
-  /* ======================================================================= */
-  /* GUEST NAME                                                               */
-  /* ======================================================================= */
 
   let guestName =
     guest.name?.trim() ||
@@ -819,9 +701,9 @@ export async function downloadPdf(
     71
   );
 
-  /* ======================================================================= */
-  /* EVENT INFO FRAME                                                         */
-  /* ======================================================================= */
+  /* ==========================================================
+     EVENT INFO
+     ========================================================== */
 
   pdf.setDrawColor(
     GOLD[0],
@@ -830,7 +712,7 @@ export async function downloadPdf(
   );
 
   pdf.setLineWidth(
-    0.3
+    0.30
   );
 
   pdf.roundedRect(
@@ -842,8 +724,6 @@ export async function downloadPdf(
     4,
     "S"
   );
-
-  /* Vertical separators */
 
   pdf.setLineWidth(
     0.16
@@ -863,10 +743,6 @@ export async function downloadPdf(
     94
   );
 
-  /* ======================================================================= */
-  /* EVENT LABELS                                                             */
-  /* ======================================================================= */
-
   pdf.setTextColor(
     GOLD[0],
     GOLD[1],
@@ -883,7 +759,7 @@ export async function downloadPdf(
   );
 
   pdf.setCharSpace(
-    0.8
+    0.7
   );
 
   centerText(
@@ -911,10 +787,6 @@ export async function downloadPdf(
     0
   );
 
-  /* ======================================================================= */
-  /* EVENT VALUES                                                             */
-  /* ======================================================================= */
-
   pdf.setTextColor(
     WHITE[0],
     WHITE[1],
@@ -927,14 +799,12 @@ export async function downloadPdf(
   );
 
   pdf.setFontSize(
-    4.9
+    4.8
   );
 
   centerText(
     pdf,
-    formatDate(
-      event.date
-    ),
+    formatDate(event.date),
     20.8,
     88
   );
@@ -947,7 +817,7 @@ export async function downloadPdf(
     pdf,
     venue.toUpperCase(),
     23,
-    4.9
+    4.8
   );
 
   centerText(
@@ -958,26 +828,28 @@ export async function downloadPdf(
   );
 
   pdf.setFontSize(
-    4.9
+    4.8
   );
 
   centerText(
     pdf,
-    formatTime(
-      event.time
-    ),
+    formatTime(event.time),
     79.2,
     88
   );
 
-  /* ======================================================================= */
-  /* QR CODE                                                                  */
-  /* ======================================================================= */
+  /* ==========================================================
+     QR CODE
+     ========================================================== */
 
   const qr =
-    await createQr(
+    await generateQr(
       guest.qr_token
     );
+
+  /*
+   * WHITE QR BACKING
+   */
 
   pdf.setFillColor(
     255,
@@ -986,14 +858,18 @@ export async function downloadPdf(
   );
 
   pdf.roundedRect(
-    32.5,
+    32,
     97,
-    35,
-    35,
+    36,
+    36,
     3.5,
     3.5,
     "F"
   );
+
+  /*
+   * GOLD QR BORDER
+   */
 
   pdf.setDrawColor(
     GOLD[0],
@@ -1002,31 +878,39 @@ export async function downloadPdf(
   );
 
   pdf.setLineWidth(
-    0.6
+    0.65
   );
 
   pdf.roundedRect(
-    32.5,
+    32,
     97,
-    35,
-    35,
+    36,
+    36,
     3.5,
     3.5,
     "S"
   );
 
+  /*
+   * ACTUAL QR
+   *
+   * This is now inserted as a PNG data URL.
+   */
+
   pdf.addImage(
     qr,
     "PNG",
-    36,
+    35.5,
     100.5,
-    28,
-    28
+    29,
+    29,
+    undefined,
+    "FAST"
   );
 
-  /* ======================================================================= */
-  /* SCAN TEXT                                                                */
-  /* ======================================================================= */
+  /* ==========================================================
+     SCAN LABEL
+     ========================================================== */
 
   pdf.setTextColor(
     GOLD[0],
@@ -1058,9 +942,37 @@ export async function downloadPdf(
     0
   );
 
-  /* ======================================================================= */
-  /* PASS ID                                                                  */
-  /* ======================================================================= */
+  /* ==========================================================
+     PASS ID
+     ========================================================== */
+
+  pdf.setFillColor(
+    DARK[0],
+    DARK[1],
+    DARK[2]
+  );
+
+  pdf.setGState(
+    new (pdf as any).GState({
+      opacity: 0.88,
+    })
+  );
+
+  pdf.roundedRect(
+    27,
+    138,
+    46,
+    11.5,
+    3,
+    3,
+    "F"
+  );
+
+  pdf.setGState(
+    new (pdf as any).GState({
+      opacity: 1,
+    })
+  );
 
   pdf.setDrawColor(
     GOLD[0],
@@ -1080,34 +992,6 @@ export async function downloadPdf(
     3,
     3,
     "S"
-  );
-
-  pdf.setFillColor(
-    DARK[0],
-    DARK[1],
-    DARK[2]
-  );
-
-  pdf.setGState(
-    new (pdf as any).GState({
-      opacity: 0.82,
-    })
-  );
-
-  pdf.roundedRect(
-    27,
-    138,
-    46,
-    11.5,
-    3,
-    3,
-    "F"
-  );
-
-  pdf.setGState(
-    new (pdf as any).GState({
-      opacity: 1,
-    })
   );
 
   pdf.setTextColor(
@@ -1162,9 +1046,9 @@ export async function downloadPdf(
     146
   );
 
-  /* ======================================================================= */
-  /* FOOTER                                                                   */
-  /* ======================================================================= */
+  /* ==========================================================
+     FOOTER
+     ========================================================== */
 
   pdf.setDrawColor(
     GOLD[0],
@@ -1240,9 +1124,9 @@ export async function downloadPdf(
     0
   );
 
-  /* ======================================================================= */
-  /* DOWNLOAD                                                                 */
-  /* ======================================================================= */
+  /* ==========================================================
+     SAVE
+     ========================================================== */
 
   const safeName =
     guest.name
@@ -1260,17 +1144,19 @@ export async function downloadPdf(
   );
 }
 
-/* ========================================================================= */
-/* WHATSAPP                                                                  */
-/* ========================================================================= */
+/* ============================================================
+   WHATSAPP
+   ============================================================ */
 
 export const waLink = (
   guest: Guest,
   event: EventRow
 ) => {
   const phone =
-    (guest.phone || "")
-      .replace(/\D/g, "");
+    (guest.phone || "").replace(
+      /\D/g,
+      ""
+    );
 
   const message =
     `Hey ${guest.name}! 🎉\n` +

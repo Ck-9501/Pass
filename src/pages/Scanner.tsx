@@ -253,15 +253,7 @@ export default function Scanner({ ev }: ScannerProps) {
        * valid -> checked_in
        */
 
-      const { error: updateError } = await supabase
-        .from("guests")
-        .update({
-          status: "checked_in",
-          checked_in_at: new Date().toISOString(),
-        })
-        .eq("id", typedGuest.id)
-        .eq("qr_token", token)
-        .eq("status", "valid");
+      const { error: updateError } = await supabase.rpc("pp_check_in", { p_token: token });
 
       if (updateError) {
         console.error("Guest update error:", updateError);
