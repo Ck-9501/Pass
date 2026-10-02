@@ -11,11 +11,13 @@ import {
   supabase,
   type EventRow,
 } from "../lib/supabase";
+
 import {
   generateQr,
   newPassId,
   newToken,
 } from "../lib/pass";
+
 import {
   PassArtwork,
   waitForImages,
@@ -37,7 +39,28 @@ type RequestRow = {
   guest_id: string | null;
   pdf_path: string | null;
   generated_at: string | null;
+  issued_price: number | null;
 };
+
+type ProfileRow = {
+  user_id: string;
+  full_name: string | null;
+  role: Role;
+  member_code: string | null;
+};
+
+/* ========================================================= */
+/* CHANGE THESE PRICES TO YOUR ACTUAL VYRA PRICES            */
+/* ========================================================= */
+
+const PASS_PRICES: Record<string, number> = {
+  Regular: 800,
+  "Early Bird": 600,
+  Couple: 1500,
+  "Surge Pass": 1200,
+};
+
+/* ========================================================= */
 
 const PASS_TYPES = [
   "Regular",
@@ -50,6 +73,14 @@ const sleep = (ms: number) =>
   new Promise<void>((resolve) =>
     setTimeout(resolve, ms)
   );
+
+function getPassPrice(passType: string): number {
+  return PASS_PRICES[passType] ?? 0;
+}
+
+function formatMoney(value: number): string {
+  return `₹${value.toLocaleString("en-IN")}`;
+}
 
 function formatDate(date: string | null) {
   if (!date) return "TBA";
@@ -114,6 +145,10 @@ export default function Requests({
     []
   );
 
+  const [profiles, setProfiles] = useState<
+    Record<string, ProfileRow>
+  >({});
+
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [generatingId, setGeneratingId] =
@@ -138,8 +173,17 @@ export default function Requests({
   const [pdfVersion, setPdfVersion] =
     useState(() => Date.now());
 
+  const [expandedMember, setExpandedMember] =
+    useState<string | null>(null);
+
   const pdfRef =
     useRef<HTMLDivElement>(null);
+
+  const readerProfile = (
+    userId: string
+  ): ProfileRow | undefined => {
+    return profiles[userId];
+  };
 
   /* ========================================================= */
   /* LOAD REQUESTS                                             */
@@ -170,7 +214,8 @@ export default function Requests({
         submitted_by,
         guest_id,
         pdf_path,
-        generated_at
+        generated_at,
+        issued_price
         `
       )
       .eq("event_id", event.id)
@@ -204,10 +249,70 @@ export default function Requests({
       console.error(fetchError);
       setError(fetchError.message);
       setRequests([]);
+      setLoading(false);
+      return;
+    }
+
+    const loadedRequests =
+      (data ?? []) as RequestRow[];
+
+    setRequests(loadedRequests);
+
+    /* ------------------------------------------------------- */
+    /* Load profiles for Admin member breakdown                */
+    /* ------------------------------------------------------- */
+
+    if (
+      role === "admin" &&
+      loadedRequests.length > 0
+    ) {
+      const userIds = [
+        ...new Set(
+          loadedRequests.map(
+            (request) =>
+              request.submitted_by
+          )
+        ),
+      ];
+
+      const {
+        data: profileData,
+        error: profileError,
+      } = await supabase
+        .from("profiles")
+        .select(
+          `
+          user_id,
+          full_name,
+          role,
+          member_code
+          `
+        )
+        .in("user_id", userIds);
+
+      if (profileError) {
+        console.error(
+          "Profile loading error:",
+          profileError
+        );
+      } else {
+        const profileMap: Record<
+          string,
+          ProfileRow
+        > = {};
+
+        (
+          (profileData ??
+            []) as ProfileRow[]
+        ).forEach((profile) => {
+          profileMap[profile.user_id] =
+            profile;
+        });
+
+        setProfiles(profileMap);
+      }
     } else {
-      setRequests(
-        (data ?? []) as RequestRow[]
-      );
+      setProfiles({});
     }
 
     setLoading(false);
@@ -262,7 +367,8 @@ export default function Requests({
           .insert({
             event_id: event.id,
             submitted_by: user.id,
-            guest_name: guestName.trim(),
+            guest_name:
+              guestName.trim(),
             phone:
               phone.trim() || null,
             pass_type: passType,
@@ -312,10 +418,9 @@ export default function Requests({
     setGeneratingId(request.id);
 
     try {
-      /*
-       * 1. Create the guest using the SAME
-       *    ID/token system as CreatePass.
-       */
+      /* ----------------------------------------------------- */
+      /* 1. Create guest                                      */
+      /* ----------------------------------------------------- */
 
       const passId = newPassId();
       const token = newToken();
@@ -350,9 +455,9 @@ export default function Requests({
         );
       }
 
-      /*
-       * 2. Generate QR from EXACT database token.
-       */
+      /* ----------------------------------------------------- */
+      /* 2. Generate QR                                       */
+      /* ----------------------------------------------------- */
 
       const qr = await generateQr(
         guest.qr_token
@@ -367,10 +472,9 @@ export default function Requests({
         );
       }
 
-      /*
-       * 3. Put the exact same PassArtwork
-       *    used by CreatePass into hidden DOM.
-       */
+      /* ----------------------------------------------------- */
+      /* 3. Prepare PDF artwork                              */
+      /* ----------------------------------------------------- */
 
       setPdfVersion(Date.now());
       setPdfGuest(guest);
@@ -431,9 +535,9 @@ export default function Requests({
 
       await sleep(300);
 
-      /*
-       * 4. Capture complete pass.
-       */
+      /* ----------------------------------------------------- */
+      /* 4. Capture pass                                      */
+      /* ----------------------------------------------------- */
 
       const canvas =
         await html2canvas(element, {
@@ -452,9 +556,9 @@ export default function Requests({
           0.96
         );
 
-      /*
-       * 5. Create PDF.
-       */
+      /* ----------------------------------------------------- */
+      /* 5. Create PDF                                        */
+      /* ----------------------------------------------------- */
 
       const pdf = new jsPDF({
         orientation: "portrait",
@@ -477,10 +581,9 @@ export default function Requests({
       const blob =
         pdf.output("blob");
 
-      /*
-       * 6. Upload PDF to private
-       *    Supabase Storage.
-       */
+      /* ----------------------------------------------------- */
+      /* 6. Upload PDF                                        */
+      /* ----------------------------------------------------- */
 
       const pdfPath =
         `${event.id}/${request.id}/${guest.pass_id}.pdf`;
@@ -505,9 +608,14 @@ export default function Requests({
         );
       }
 
-      /*
-       * 7. Mark request as generated.
-       */
+      /* ----------------------------------------------------- */
+      /* 7. SAVE ISSUED PRICE                                */
+      /* ----------------------------------------------------- */
+
+      const issuedPrice =
+        getPassPrice(
+          request.pass_type
+        );
 
       const {
         error: updateError,
@@ -519,6 +627,8 @@ export default function Requests({
           pdf_path: pdfPath,
           generated_at:
             new Date().toISOString(),
+          issued_price:
+            issuedPrice,
         })
         .eq("id", request.id);
 
@@ -606,6 +716,77 @@ export default function Requests({
   };
 
   /* ========================================================= */
+  /* ADMIN STATS                                               */
+  /* ========================================================= */
+
+  const generatedRequests =
+    requests.filter(
+      (request) =>
+        request.status === "generated"
+    );
+
+  const totalPasses =
+    generatedRequests.length;
+
+  const totalMoney =
+    generatedRequests.reduce(
+      (sum, request) =>
+        sum +
+        Number(
+          request.issued_price ?? 0
+        ),
+      0
+    );
+
+  const memberIds = [
+    ...new Set(
+      generatedRequests.map(
+        (request) =>
+          request.submitted_by
+      )
+    ),
+  ];
+
+  const memberStats = memberIds.map(
+    (memberId) => {
+      const memberRequests =
+        generatedRequests.filter(
+          (request) =>
+            request.submitted_by ===
+            memberId
+        );
+
+      const profile =
+        readerProfile(memberId);
+
+      const money =
+        memberRequests.reduce(
+          (sum, request) =>
+            sum +
+            Number(
+              request.issued_price ?? 0
+            ),
+          0
+        );
+
+      return {
+        memberId,
+        name:
+          profile?.full_name ||
+          "Team Member",
+        code:
+          profile?.member_code ||
+          memberId.slice(0, 8),
+        requests:
+          memberRequests,
+        count:
+          memberRequests.length,
+        money,
+      };
+    }
+  );
+
+  /* ========================================================= */
   /* UI                                                        */
   /* ========================================================= */
 
@@ -645,8 +826,9 @@ export default function Requests({
           </p>
 
           <p className="mt-1 text-sm text-slate-400">
-            {event.date} · {event.time} ·{" "}
-            {event.venue}
+            {formatDate(event.date)} ·{" "}
+            {formatTime(event.time)} ·{" "}
+            {venueText(event.venue)}
           </p>
         </div>
       )}
@@ -654,6 +836,299 @@ export default function Requests({
       {!event && (
         <div className="rounded-2xl border border-yellow-500/20 bg-yellow-500/5 p-5 text-sm text-yellow-300">
           No event is currently available.
+        </div>
+      )}
+
+      {/* ===================================================== */}
+      {/* ADMIN SALES / ISSUANCE                               */}
+      {/* ===================================================== */}
+
+      {role === "admin" && (
+        <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-6">
+
+          <div className="mb-6">
+            <p className="text-xs uppercase tracking-[0.18em] text-slate-500">
+              Admin Only
+            </p>
+
+            <h2 className="mt-2 text-xl font-semibold text-white">
+              Pass Issuance & Collection
+            </h2>
+
+            <p className="mt-1 text-sm text-slate-400">
+              Track passes generated by each team member and total money collected.
+            </p>
+          </div>
+
+          {/* TOTAL CARDS */}
+
+          <div className="grid gap-4 md:grid-cols-2">
+
+            <div className="rounded-2xl border border-white/10 bg-black/20 p-5">
+              <p className="text-xs uppercase tracking-wider text-slate-500">
+                Total Passes Issued
+              </p>
+
+              <p className="mt-3 text-4xl font-semibold text-white">
+                {totalPasses}
+              </p>
+
+              <p className="mt-2 text-sm text-slate-500">
+                Successfully generated passes
+              </p>
+            </div>
+
+            <div className="rounded-2xl border border-white/10 bg-black/20 p-5">
+              <p className="text-xs uppercase tracking-wider text-slate-500">
+                Total Money Collected
+              </p>
+
+              <p className="mt-3 text-4xl font-semibold text-green-300">
+                {formatMoney(totalMoney)}
+              </p>
+
+              <p className="mt-2 text-sm text-slate-500">
+                Based on generated passes
+              </p>
+            </div>
+
+          </div>
+
+          {/* MEMBER BREAKDOWN */}
+
+          <div className="mt-6">
+
+            <div className="mb-3">
+              <h3 className="text-base font-semibold text-white">
+                Member Breakdown
+              </h3>
+
+              <p className="mt-1 text-xs text-slate-500">
+                Click a member to view their issued passes.
+              </p>
+            </div>
+
+            {memberStats.length === 0 ? (
+              <div className="rounded-xl border border-dashed border-white/10 py-8 text-center text-sm text-slate-500">
+                No passes have been issued yet.
+              </div>
+            ) : (
+              <div className="space-y-3">
+
+                {memberStats.map(
+                  (member) => {
+                    const expanded =
+                      expandedMember ===
+                      member.memberId;
+
+                    return (
+                      <div
+                        key={member.memberId}
+                        className="overflow-hidden rounded-xl border border-white/10 bg-black/20"
+                      >
+
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setExpandedMember(
+                              expanded
+                                ? null
+                                : member.memberId
+                            )
+                          }
+                          className="w-full p-4 text-left hover:bg-white/[0.03]"
+                        >
+
+                          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+
+                            <div>
+                              <p className="font-medium text-white">
+                                {member.name}
+                              </p>
+
+                              <p className="mt-1 text-xs text-slate-500">
+                                {member.code}
+                              </p>
+                            </div>
+
+                            <div className="flex items-center gap-8">
+
+                              <div>
+                                <p className="text-xs text-slate-500">
+                                  PASSES
+                                </p>
+
+                                <p className="mt-1 text-lg font-semibold text-white">
+                                  {member.count}
+                                </p>
+                              </div>
+
+                              <div>
+                                <p className="text-xs text-slate-500">
+                                  COLLECTED
+                                </p>
+
+                                <p className="mt-1 text-lg font-semibold text-green-300">
+                                  {formatMoney(
+                                    member.money
+                                  )}
+                                </p>
+                              </div>
+
+                              <div className="text-slate-500">
+                                {expanded
+                                  ? "▲"
+                                  : "▼"}
+                              </div>
+
+                            </div>
+
+                          </div>
+                        </button>
+
+                        {/* MEMBER DETAILS */}
+
+                        {expanded && (
+                          <div className="border-t border-white/10 p-4">
+
+                            <div className="mb-3 flex items-center justify-between">
+
+                              <div>
+                                <p className="text-sm font-semibold text-white">
+                                  Issued Passes
+                                </p>
+
+                                <p className="text-xs text-slate-500">
+                                  {member.count} passes ·{" "}
+                                  {formatMoney(
+                                    member.money
+                                  )}
+                                </p>
+                              </div>
+
+                            </div>
+
+                            <div className="space-y-2">
+
+                              {member.requests.map(
+                                (request) => (
+                                  <div
+                                    key={request.id}
+                                    className="rounded-xl border border-white/5 bg-white/[0.02] p-3"
+                                  >
+
+                                    <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+
+                                      <div>
+                                        <p className="text-sm font-medium text-white">
+                                          {request.guest_name}
+                                        </p>
+
+                                        <p className="mt-1 text-xs text-slate-500">
+                                          {request.pass_type}
+                                          {request.phone
+                                            ? ` · ${request.phone}`
+                                            : ""}
+                                        </p>
+
+                                        {request.guest_id && (
+                                          <p className="mt-1 text-[10px] font-mono text-slate-600">
+                                            Guest ID:{" "}
+                                            {request.guest_id}
+                                          </p>
+                                        )}
+                                      </div>
+
+                                      <div className="text-left md:text-right">
+
+                                        <p className="text-sm font-semibold text-green-300">
+                                          {formatMoney(
+                                            Number(
+                                              request.issued_price ??
+                                                getPassPrice(
+                                                  request.pass_type
+                                                )
+                                            )
+                                          )}
+                                        </p>
+
+                                        <p className="mt-1 text-[10px] text-slate-600">
+                                          {request.generated_at
+                                            ? new Date(
+                                                request.generated_at
+                                              ).toLocaleString()
+                                            : ""}
+                                        </p>
+
+                                      </div>
+
+                                    </div>
+
+                                  </div>
+                                )
+                              )}
+
+                            </div>
+
+                          </div>
+                        )}
+
+                      </div>
+                    );
+                  }
+                )}
+
+                {/* GRAND TOTAL */}
+
+                <div className="mt-4 rounded-xl border border-white/15 bg-white/[0.05] p-5">
+
+                  <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+
+                    <div>
+                      <p className="text-xs uppercase tracking-wider text-slate-500">
+                        Grand Total
+                      </p>
+
+                      <p className="mt-1 text-lg font-semibold text-white">
+                        All Team Members
+                      </p>
+                    </div>
+
+                    <div className="flex gap-10">
+
+                      <div>
+                        <p className="text-xs text-slate-500">
+                          PASSES
+                        </p>
+
+                        <p className="mt-1 text-2xl font-semibold text-white">
+                          {totalPasses}
+                        </p>
+                      </div>
+
+                      <div>
+                        <p className="text-xs text-slate-500">
+                          MONEY
+                        </p>
+
+                        <p className="mt-1 text-2xl font-semibold text-green-300">
+                          {formatMoney(
+                            totalMoney
+                          )}
+                        </p>
+                      </div>
+
+                    </div>
+
+                  </div>
+
+                </div>
+
+              </div>
+            )}
+
+          </div>
+
         </div>
       )}
 
@@ -751,9 +1226,10 @@ export default function Requests({
                   )
                 }
                 placeholder="Optional note"
-                className="w-full rounded-xl border border-white/10 bg-black/30 px-4 py-3 text-white outline-none placeholder:text-slate-600 focus:border-white/30"
+                className="w-full rounded-xl border border-white/10 bg-black/30 px-4 py-3 text-white outline-none placeholder:text-slate-600"
               />
             </div>
+
           </div>
 
           {error && (
@@ -779,6 +1255,7 @@ export default function Requests({
               ? "Submitting..."
               : "Submit Guest"}
           </button>
+
         </form>
       )}
 
@@ -843,6 +1320,7 @@ export default function Requests({
                   <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
 
                     <div>
+
                       <p className="font-medium text-white">
                         {request.guest_name}
                       </p>
@@ -854,11 +1332,28 @@ export default function Requests({
                           : ""}
                       </p>
 
+                      {role === "admin" && (
+                        <p className="mt-1 text-xs text-slate-600">
+                          Submitted by:{" "}
+                          {readerProfile(
+                            request.submitted_by
+                          )?.full_name ||
+                            readerProfile(
+                              request.submitted_by
+                            )?.member_code ||
+                            request.submitted_by.slice(
+                              0,
+                              8
+                            )}
+                        </p>
+                      )}
+
                       <p className="mt-1 text-xs text-slate-600">
                         {new Date(
                           request.created_at
                         ).toLocaleString()}
                       </p>
+
                     </div>
 
                     <div className="flex items-center gap-3">
@@ -918,7 +1413,9 @@ export default function Requests({
                             Download PDF
                           </button>
                         )}
+
                     </div>
+
                   </div>
 
                   {request.notes && (
@@ -930,15 +1427,33 @@ export default function Requests({
                   {role === "admin" &&
                     request.status ===
                       "generated" && (
-                      <p className="mt-3 text-xs text-green-400">
-                        Pass generated and delivered to the submitting member.
-                      </p>
+                      <div className="mt-3 flex items-center justify-between border-t border-white/5 pt-3">
+
+                        <p className="text-xs text-green-400">
+                          Pass generated and delivered to the submitting member.
+                        </p>
+
+                        <p className="text-xs font-semibold text-slate-300">
+                          {formatMoney(
+                            Number(
+                              request.issued_price ??
+                                getPassPrice(
+                                  request.pass_type
+                                )
+                            )
+                          )}
+                        </p>
+
+                      </div>
                     )}
+
                 </div>
               )
             )}
+
           </div>
         )}
+
       </div>
 
       {/* ===================================================== */}
@@ -969,6 +1484,7 @@ export default function Requests({
             )}
         </div>
       </div>
+
     </div>
   );
 }
