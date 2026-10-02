@@ -18,7 +18,6 @@ interface CreatePassProps {
   onSelected: (event: EventRow) => void;
 }
 
-/* Must match the current guests.pass_type constraint */
 const PASS_TYPES = [
   "Regular",
   "Early Bird",
@@ -29,7 +28,6 @@ const PASS_TYPES = [
 const sleep = (ms: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, ms));
 
-/* Wait until the hidden pass has rendered for this guest */
 export async function waitForPass(
   el: HTMLElement,
   passId: string
@@ -45,33 +43,23 @@ export async function waitForPass(
   return false;
 }
 
-/* Wait until every image inside the pass has loaded */
 export async function waitForImages(el: HTMLElement) {
-  const imgs = Array.from(
-    el.querySelectorAll("img")
-  );
+  const imgs = Array.from(el.querySelectorAll("img"));
 
   await Promise.all(
     imgs.map((img) => {
-      if (
-        img.complete &&
-        img.naturalWidth > 0
-      ) {
+      if (img.complete && img.naturalWidth > 0) {
         return Promise.resolve();
       }
 
       return new Promise<void>((resolve) => {
-        img.addEventListener(
-          "load",
-          () => resolve(),
-          { once: true }
-        );
+        img.addEventListener("load", () => resolve(), {
+          once: true,
+        });
 
-        img.addEventListener(
-          "error",
-          () => resolve(),
-          { once: true }
-        );
+        img.addEventListener("error", () => resolve(), {
+          once: true,
+        });
       });
     })
   );
@@ -103,8 +91,7 @@ function formatDate(date: string | null) {
     "DEC",
   ];
 
-  const monthName =
-    months[Number(month) - 1] || month;
+  const monthName = months[Number(month) - 1] || month;
 
   return `${day} ${monthName} ${year}`;
 }
@@ -163,8 +150,7 @@ export function PassArtwork({
         overflow: "hidden",
         background: "#050810",
         color: "#ffffff",
-        fontFamily:
-          "Arial, Helvetica, sans-serif",
+        fontFamily: "Arial, Helvetica, sans-serif",
       }}
     >
       {/* BACKGROUND */}
@@ -214,8 +200,7 @@ export function PassArtwork({
           position: "absolute",
           inset: 24,
           zIndex: 2,
-          border:
-            "2px solid rgba(241,203,117,.90)",
+          border: "2px solid rgba(241,203,117,.90)",
           borderRadius: 28,
           boxShadow:
             "0 0 20px rgba(241,203,117,.18), inset 0 0 35px rgba(0,0,0,.14)",
@@ -229,8 +214,7 @@ export function PassArtwork({
           position: "absolute",
           inset: 37,
           zIndex: 2,
-          border:
-            "1px solid rgba(255,244,210,.22)",
+          border: "1px solid rgba(255,244,210,.22)",
           borderRadius: 21,
           pointerEvents: "none",
         }}
@@ -255,8 +239,7 @@ export function PassArtwork({
             fontWeight: 600,
             letterSpacing: 5,
             color: "#f5d98d",
-            textShadow:
-              "0 2px 8px rgba(0,0,0,.65)",
+            textShadow: "0 2px 8px rgba(0,0,0,.65)",
           }}
         >
           VYRA ENTERTAINMENT
@@ -266,10 +249,8 @@ export function PassArtwork({
           style={{
             padding: "10px 18px",
             borderRadius: 25,
-            border:
-              "1px solid rgba(245,213,135,.78)",
-            background:
-              "rgba(2,7,14,.28)",
+            border: "1px solid rgba(245,213,135,.78)",
+            background: "rgba(2,7,14,.28)",
             fontSize: 12,
             letterSpacing: 3,
             color: "#fff3d2",
@@ -292,8 +273,7 @@ export function PassArtwork({
       >
         <div
           style={{
-            fontFamily:
-              "Georgia, 'Times New Roman', serif",
+            fontFamily: "Georgia, 'Times New Roman', serif",
             fontSize: 86,
             fontWeight: 500,
             letterSpacing: 7,
@@ -312,8 +292,7 @@ export function PassArtwork({
             fontSize: 17,
             letterSpacing: 10,
             color: "#ffffff",
-            textShadow:
-              "0 2px 8px rgba(0,0,0,.55)",
+            textShadow: "0 2px 8px rgba(0,0,0,.55)",
           }}
         >
           ENTERTAINMENT
@@ -356,8 +335,7 @@ export function PassArtwork({
             fontSize: 15,
             letterSpacing: 7,
             color: "#f6e8c7",
-            textShadow:
-              "0 2px 9px rgba(0,0,0,.65)",
+            textShadow: "0 2px 9px rgba(0,0,0,.65)",
           }}
         >
           YOU ARE INVITED TO
@@ -366,8 +344,7 @@ export function PassArtwork({
         <div
           style={{
             marginTop: 18,
-            fontFamily:
-              "Georgia, 'Times New Roman', serif",
+            fontFamily: "Georgia, 'Times New Roman', serif",
             fontSize: 67,
             lineHeight: 1,
             letterSpacing: 1,
@@ -386,8 +363,7 @@ export function PassArtwork({
             width: 72,
             height: 2,
             background: "#f3cf78",
-            boxShadow:
-              "0 0 12px rgba(243,207,120,.50)",
+            boxShadow: "0 0 12px rgba(243,207,120,.50)",
           }}
         />
       </div>
@@ -402,12 +378,9 @@ export function PassArtwork({
           zIndex: 4,
           padding: "17px 20px 21px",
           textAlign: "center",
-          borderTop:
-            "1px solid rgba(241,203,117,.60)",
-          borderBottom:
-            "1px solid rgba(241,203,117,.42)",
-          background:
-            "rgba(2,7,14,.20)",
+          borderTop: "1px solid rgba(241,203,117,.60)",
+          borderBottom: "1px solid rgba(241,203,117,.42)",
+          background: "rgba(2,7,14,.20)",
           borderRadius: 8,
         }}
       >
@@ -424,13 +397,11 @@ export function PassArtwork({
         <div
           style={{
             marginTop: 9,
-            fontFamily:
-              "Georgia, 'Times New Roman', serif",
+            fontFamily: "Georgia, 'Times New Roman', serif",
             fontSize: 49,
             lineHeight: 1.12,
             color: "#fff8e9",
-            textShadow:
-              "0 3px 13px rgba(0,0,0,.65)",
+            textShadow: "0 3px 13px rgba(0,0,0,.65)",
           }}
         >
           {guest.name}
@@ -446,16 +417,12 @@ export function PassArtwork({
           top: 715,
           zIndex: 4,
           display: "grid",
-          gridTemplateColumns:
-            "1fr 1.25fr 1fr",
+          gridTemplateColumns: "1fr 1.25fr 1fr",
           overflow: "hidden",
-          border:
-            "1px solid rgba(242,205,123,.68)",
+          border: "1px solid rgba(242,205,123,.68)",
           borderRadius: 22,
-          background:
-            "rgba(2,7,14,.65)",
-          boxShadow:
-            "0 15px 32px rgba(0,0,0,.25)",
+          background: "rgba(2,7,14,.65)",
+          boxShadow: "0 15px 32px rgba(0,0,0,.25)",
           backdropFilter: "blur(4px)",
         }}
       >
@@ -469,16 +436,10 @@ export function PassArtwork({
             justifyContent: "center",
             alignItems: "center",
             textAlign: "center",
-            borderRight:
-              "1px solid rgba(242,205,123,.32)",
+            borderRight: "1px solid rgba(242,205,123,.32)",
           }}
         >
-          <div
-            style={{
-              color: "#f2d27f",
-              marginBottom: 9,
-            }}
-          >
+          <div style={{ color: "#f2d27f", marginBottom: 9 }}>
             <Icon name="calendar" size={22} />
           </div>
 
@@ -495,8 +456,7 @@ export function PassArtwork({
           <div
             style={{
               marginTop: 7,
-              fontFamily:
-                "Georgia, 'Times New Roman', serif",
+              fontFamily: "Georgia, 'Times New Roman', serif",
               fontSize: 20,
               lineHeight: 1.15,
               color: "#ffffff",
@@ -516,16 +476,10 @@ export function PassArtwork({
             justifyContent: "center",
             alignItems: "center",
             textAlign: "center",
-            borderRight:
-              "1px solid rgba(242,205,123,.32)",
+            borderRight: "1px solid rgba(242,205,123,.32)",
           }}
         >
-          <div
-            style={{
-              color: "#f2d27f",
-              marginBottom: 9,
-            }}
-          >
+          <div style={{ color: "#f2d27f", marginBottom: 9 }}>
             <Icon name="pin" size={22} />
           </div>
 
@@ -543,8 +497,7 @@ export function PassArtwork({
             style={{
               marginTop: 7,
               maxWidth: 260,
-              fontFamily:
-                "Georgia, 'Times New Roman', serif",
+              fontFamily: "Georgia, 'Times New Roman', serif",
               fontSize: 20,
               lineHeight: 1.15,
               color: "#ffffff",
@@ -566,12 +519,7 @@ export function PassArtwork({
             textAlign: "center",
           }}
         >
-          <div
-            style={{
-              color: "#f2d27f",
-              marginBottom: 9,
-            }}
-          >
+          <div style={{ color: "#f2d27f", marginBottom: 9 }}>
             <Icon name="clock" size={22} />
           </div>
 
@@ -588,8 +536,7 @@ export function PassArtwork({
           <div
             style={{
               marginTop: 7,
-              fontFamily:
-                "Georgia, 'Times New Roman', serif",
+              fontFamily: "Georgia, 'Times New Roman', serif",
               fontSize: 20,
               color: "#ffffff",
             }}
@@ -620,8 +567,7 @@ export function PassArtwork({
             margin: "0 auto",
             borderRadius: 19,
             background: "#ffffff",
-            border:
-              "2px solid rgba(242,205,123,.95)",
+            border: "2px solid rgba(242,205,123,.95)",
             boxShadow:
               "0 0 24px rgba(242,205,123,.30), 0 15px 28px rgba(0,0,0,.28)",
           }}
@@ -660,8 +606,7 @@ export function PassArtwork({
             fontSize: 12,
             letterSpacing: 6,
             color: "#f2d27f",
-            textShadow:
-              "0 2px 8px rgba(0,0,0,.65)",
+            textShadow: "0 2px 8px rgba(0,0,0,.65)",
           }}
         >
           SCAN TO ENTER
@@ -685,12 +630,9 @@ export function PassArtwork({
             minWidth: 320,
             padding: "13px 30px 15px",
             borderRadius: 17,
-            border:
-              "1px solid rgba(242,205,123,.78)",
-            background:
-              "rgba(2,7,14,.70)",
-            boxShadow:
-              "0 12px 24px rgba(0,0,0,.22)",
+            border: "1px solid rgba(242,205,123,.78)",
+            background: "rgba(2,7,14,.70)",
+            boxShadow: "0 12px 24px rgba(0,0,0,.22)",
           }}
         >
           <div
@@ -706,8 +648,7 @@ export function PassArtwork({
           <div
             style={{
               marginTop: 6,
-              fontFamily:
-                "Georgia, 'Times New Roman', serif",
+              fontFamily: "Georgia, 'Times New Roman', serif",
               fontSize: 24,
               letterSpacing: 3,
               color: "#fff8e9",
@@ -749,8 +690,7 @@ export function PassArtwork({
 
           <div
             style={{
-              fontFamily:
-                "Georgia, 'Times New Roman', serif",
+              fontFamily: "Georgia, 'Times New Roman', serif",
               fontSize: 18,
               letterSpacing: 5,
               color: "#f2d27f",
@@ -820,8 +760,7 @@ export default function CreatePass({
   const selectedEvent = useMemo(() => {
     return (
       events.find(
-        (event) =>
-          event.id === selectedEventId
+        (event) => event.id === selectedEventId
       ) ||
       ev ||
       null
@@ -840,8 +779,7 @@ export default function CreatePass({
     return (
       events.find(
         (event) =>
-          event.id ===
-          generatedGuest.event_id
+          event.id === generatedGuest.event_id
       ) ||
       selectedEvent
     );
@@ -866,8 +804,7 @@ export default function CreatePass({
     setSelectedEventId(eventId);
 
     const selected = events.find(
-      (event) =>
-        event.id === eventId
+      (event) => event.id === eventId
     );
 
     if (selected) {
@@ -876,7 +813,7 @@ export default function CreatePass({
   };
 
   /* --------------------------------------------------------------------- */
-  /* DOWNLOAD PDF                                                         */
+  /* DOWNLOAD / GENERATE PDF + GOOGLE DRIVE BACKUP                         */
   /* --------------------------------------------------------------------- */
 
   const downloadPdf = async (
@@ -897,10 +834,6 @@ export default function CreatePass({
       return;
     }
 
-    /*
-     * Give React time to render the newly-created
-     * guest and QR into the hidden full-size pass.
-     */
     for (
       let i = 0;
       i < 60 && !passRef.current;
@@ -931,9 +864,6 @@ export default function CreatePass({
         );
       }
 
-      /*
-       * Make sure the QR image exists.
-       */
       const qrImage =
         element.querySelector(
           'img[data-pass-qr="1"]'
@@ -945,9 +875,6 @@ export default function CreatePass({
         );
       }
 
-      /*
-       * Wait until the QR image is actually loaded.
-       */
       await waitForImages(element);
 
       if (
@@ -959,19 +886,8 @@ export default function CreatePass({
         );
       }
 
-      /*
-       * Small rendering delay.
-       */
       await sleep(300);
 
-      /*
-       * IMPORTANT:
-       *
-       * We DO NOT hide the QR anymore.
-       *
-       * The QR that you see in the pass is now
-       * directly captured into the PDF canvas.
-       */
       const canvas =
         await html2canvas(
           element,
@@ -987,33 +903,20 @@ export default function CreatePass({
           }
         );
 
-      /*
-       * Convert the complete pass artwork
-       * including the real QR into an image.
-       */
       const image =
         canvas.toDataURL(
           "image/jpeg",
           0.96
         );
 
-      /*
-       * Create 2:3 portrait PDF.
-       */
-      const pdf = new jsPDF({
-        orientation: "portrait",
-        unit: "pt",
-        format: [288, 432],
-        compress: true,
-      });
+      const pdf =
+        new jsPDF({
+          orientation: "portrait",
+          unit: "pt",
+          format: [288, 432],
+          compress: true,
+        });
 
-      /*
-       * The QR is ALREADY inside this image.
-       *
-       * No second QR insertion.
-       * No hidden QR.
-       * No coordinate guessing.
-       */
       pdf.addImage(
         image,
         "JPEG",
@@ -1024,6 +927,101 @@ export default function CreatePass({
         undefined,
         "FAST"
       );
+
+      /* ================================================================ */
+      /* GOOGLE DRIVE BACKUP                                              */
+      /* ================================================================ */
+
+      console.log(
+        "Starting Google Drive backup..."
+      );
+
+      const pdfBlob =
+        pdf.output("blob");
+
+      const arrayBuffer =
+        await pdfBlob.arrayBuffer();
+
+      const bytes =
+        new Uint8Array(
+          arrayBuffer
+        );
+
+      let binary = "";
+
+      const chunkSize = 0x8000;
+
+      for (
+        let i = 0;
+        i < bytes.length;
+        i += chunkSize
+      ) {
+        binary += String.fromCharCode(
+          ...bytes.subarray(
+            i,
+            i + chunkSize
+          )
+        );
+      }
+
+      const pdfBase64 =
+        btoa(binary);
+
+      console.log(
+        "PDF converted to base64."
+      );
+
+      const {
+        data: driveData,
+        error: driveError,
+      } =
+        await supabase.functions.invoke(
+          "google-drive",
+          {
+            body: {
+              action: "upload",
+              fileName:
+                `${guest.pass_id}.pdf`,
+              pdfBase64,
+            },
+          }
+        );
+
+      console.log(
+        "Google Drive response:",
+        driveData
+      );
+
+      if (driveError) {
+        console.error(
+          "Google Drive backup failed:",
+          driveError
+        );
+
+        throw new Error(
+          `PDF created, but Google Drive backup failed: ${driveError.message}`
+        );
+      }
+
+      if (!driveData?.fileId) {
+        console.error(
+          "Google Drive returned no file ID:",
+          driveData
+        );
+
+        throw new Error(
+          "PDF created, but Google Drive did not return a file ID."
+        );
+      }
+
+      console.log(
+        "Google Drive backup successful:",
+        driveData.fileId
+      );
+
+      /* ================================================================ */
+      /* DOWNLOAD LOCAL COPY                                              */
+      /* ================================================================ */
 
       const safeName =
         guest.name
@@ -1041,11 +1039,11 @@ export default function CreatePass({
       );
 
       setSuccess(
-        `PDF downloaded for ${guest.name}.`
+        `PDF created and backed up to Google Drive for ${guest.name}.`
       );
     } catch (err) {
       console.error(
-        "PDF generation error:",
+        "PDF generation / Drive backup error:",
         err
       );
 
@@ -1085,20 +1083,16 @@ export default function CreatePass({
     setLoading(true);
 
     try {
-      /*
-       * Generate IDs BEFORE inserting.
-       *
-       * This guarantees the exact qr_token saved
-       * in Supabase is the exact token used to
-       * generate the QR.
-       */
       const passId =
         newPassId();
 
       const token =
         newToken();
 
-      const { data, error: insertError } =
+      const {
+        data,
+        error: insertError,
+      } =
         await supabase
           .from("guests")
           .insert({
@@ -1128,10 +1122,6 @@ export default function CreatePass({
       const guest =
         data as Guest;
 
-      /*
-       * Generate QR from the EXACT token
-       * stored in Supabase.
-       */
       const qr =
         await generateQr(
           guest.qr_token
@@ -1148,9 +1138,6 @@ export default function CreatePass({
         );
       }
 
-      /*
-       * Update React state.
-       */
       setBgVersion(
         Date.now()
       );
@@ -1169,15 +1156,8 @@ export default function CreatePass({
 
       setName("");
 
-      /*
-       * Wait for React to render the new
-       * guest + QR before generating PDF.
-       */
       await sleep(150);
 
-      /*
-       * Generate PDF using the exact QR.
-       */
       await downloadPdf(
         guest,
         qr
