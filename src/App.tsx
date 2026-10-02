@@ -26,6 +26,7 @@ import CreatePass from './pages/CreatePass';
 import Guests from './pages/Guests';
 import Dashboard from './pages/Dashboard';
 import Scanner from './pages/Scanner';
+import Requests from './pages/Requests';
 
 import VyraBackground from './components/VyraBackground';
 import Icon from './components/Icon';
@@ -33,7 +34,34 @@ import Icon from './components/Icon';
 const SELECTED_EVENT_KEY =
   'partypass:selected-event';
 
-const nav = [
+type NavIcon =
+  | 'dashboard'
+  | 'ticket'
+  | 'users'
+  | 'scanner'
+  | 'settings'
+  | 'logout'
+  | 'chevron'
+  | 'calendar'
+  | 'clock'
+  | 'pin'
+  | 'user'
+  | 'check'
+  | 'ban'
+  | 'search'
+  | 'download'
+  | 'whatsapp'
+  | 'copy'
+  | 'spark'
+  | 'menu';
+
+type NavItem = {
+  to: string;
+  icon: NavIcon;
+  label: string;
+};
+
+const nav: NavItem[] = [
   {
     to: '/',
     icon: 'dashboard',
@@ -59,7 +87,258 @@ const nav = [
     icon: 'settings',
     label: 'Event Settings',
   },
-] as const;
+];
+
+/* =========================================================
+   MEMBER DASHBOARD
+========================================================= */
+
+function MemberDashboard({
+  ev,
+}: {
+  ev: EventRow;
+}) {
+  const [requests, setRequests] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let mounted = true;
+
+    async function loadRequests() {
+      setLoading(true);
+
+      const {
+        data: userData,
+      } = await supabase.auth.getUser();
+
+      const userId =
+        userData.user?.id;
+
+      if (!userId) {
+        if (mounted) {
+          setLoading(false);
+        }
+        return;
+      }
+
+      const {
+        data,
+        error,
+      } = await supabase
+        .from('guest_requests')
+        .select('*')
+        .eq('event_id', ev.id)
+        .eq('submitted_by', userId)
+        .order(
+          'created_at',
+          {
+            ascending: false,
+          }
+        );
+
+      if (!mounted) {
+        return;
+      }
+
+      if (error) {
+        console.error(
+          'Member requests error:',
+          error
+        );
+
+        setRequests([]);
+        setLoading(false);
+        return;
+      }
+
+      setRequests(data || []);
+      setLoading(false);
+    }
+
+    void loadRequests();
+
+    return () => {
+      mounted = false;
+    };
+  }, [ev.id]);
+
+  const pendingCount =
+    requests.filter(
+      (r) => r.status === 'pending'
+    ).length;
+
+  const generatedCount =
+    requests.filter(
+      (r) => r.status === 'generated'
+    ).length;
+
+  return (
+    <div className="space-y-6">
+
+      <div>
+        <p className="text-[10px] uppercase tracking-[.3em] text-amber-200/60">
+          Member Dashboard
+        </p>
+
+        <h1 className="font-display mt-2 text-3xl sm:text-4xl">
+          Welcome to VYRA
+        </h1>
+
+        <p className="mt-2 text-sm text-zinc-500">
+          Submit guest details and track your passes.
+        </p>
+      </div>
+
+      {/* STATS */}
+
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+
+        <div className="glass rounded-3xl p-5">
+          <p className="text-[9px] uppercase tracking-[.25em] text-zinc-500">
+            Total
+          </p>
+
+          <p className="mt-3 text-3xl font-semibold">
+            {requests.length}
+          </p>
+        </div>
+
+        <div className="glass rounded-3xl p-5">
+          <p className="text-[9px] uppercase tracking-[.25em] text-zinc-500">
+            Pending
+          </p>
+
+          <p className="mt-3 text-3xl font-semibold text-amber-200">
+            {pendingCount}
+          </p>
+        </div>
+
+        <div className="glass col-span-2 rounded-3xl p-5 sm:col-span-1">
+          <p className="text-[9px] uppercase tracking-[.25em] text-zinc-500">
+            Generated
+          </p>
+
+          <p className="mt-3 text-3xl font-semibold text-emerald-300">
+            {generatedCount}
+          </p>
+        </div>
+
+      </div>
+
+      {/* EVENT */}
+
+      <div className="glass rounded-3xl p-6">
+
+        <p className="text-[9px] uppercase tracking-[.3em] text-zinc-500">
+          Active Event
+        </p>
+
+        <h2 className="mt-2 text-xl font-semibold">
+          {ev.name}
+        </h2>
+
+        <p className="mt-1 text-sm text-zinc-500">
+          Submit guest information using My Requests.
+        </p>
+
+      </div>
+
+      {/* RECENT REQUESTS */}
+
+      <div className="glass rounded-3xl p-5">
+
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-[9px] uppercase tracking-[.3em] text-zinc-500">
+              Recent Requests
+            </p>
+
+            <h2 className="mt-1 text-lg font-semibold">
+              Your submissions
+            </h2>
+          </div>
+
+          <NavLink
+            to="/requests"
+            className="rounded-xl border border-amber-300/20 bg-amber-300/5 px-4 py-2 text-xs text-amber-100"
+          >
+            View All
+          </NavLink>
+        </div>
+
+        {loading ? (
+          <div className="py-10 text-center text-sm text-zinc-600">
+            Loading requests...
+          </div>
+        ) : requests.length === 0 ? (
+          <div className="py-10 text-center">
+
+            <Icon
+              name="ticket"
+              size={25}
+              className="mx-auto text-zinc-700"
+            />
+
+            <p className="mt-3 text-sm text-zinc-500">
+              No guest requests yet.
+            </p>
+
+            <NavLink
+              to="/requests"
+              className="mt-4 inline-block rounded-xl bg-gradient-to-r from-amber-500 to-amber-300 px-5 py-2.5 text-xs font-semibold text-black"
+            >
+              Submit Guest
+            </NavLink>
+
+          </div>
+        ) : (
+          <div className="mt-5 space-y-2">
+
+            {requests.slice(0, 5).map(
+              (request) => (
+                <div
+                  key={request.id}
+                  className="flex items-center justify-between rounded-2xl border border-white/[.06] bg-black/10 p-4"
+                >
+
+                  <div>
+                    <p className="text-sm font-medium">
+                      {request.guest_name}
+                    </p>
+
+                    <p className="mt-1 text-[11px] text-zinc-600">
+                      {request.pass_type}
+                    </p>
+                  </div>
+
+                  <span
+                    className={`rounded-full px-3 py-1 text-[9px] uppercase tracking-wider ${
+                      request.status === 'generated'
+                        ? 'bg-emerald-300/10 text-emerald-300'
+                        : request.status === 'rejected'
+                          ? 'bg-red-300/10 text-red-300'
+                          : 'bg-amber-300/10 text-amber-200'
+                    }`}
+                  >
+                    {request.status}
+                  </span>
+
+                </div>
+              )
+            )}
+
+          </div>
+        )}
+
+      </div>
+
+    </div>
+  );
+}
+
+/* =========================================================
+   SHELL
+========================================================= */
 
 function Shell({
   ev,
@@ -80,6 +359,58 @@ function Shell({
   ) => void;
   online: boolean;
 }) {
+  const [
+    role,
+    setRole,
+  ] = useState<
+    'admin' | 'member' | null
+  >(null);
+
+  useEffect(() => {
+    async function loadRole() {
+      const {
+        data,
+      } = await supabase.auth.getUser();
+
+      const userId =
+        data.user?.id;
+
+      if (!userId) {
+        setRole('member');
+        return;
+      }
+
+      const {
+        data: profile,
+        error,
+      } = await supabase
+        .from('profiles')
+        .select('role')
+        .eq(
+          'user_id',
+          userId
+        )
+        .maybeSingle();
+
+      if (error) {
+        console.error(
+          'Profile role error:',
+          error
+        );
+
+        setRole('member');
+        return;
+      }
+
+      setRole(
+        profile?.role === 'admin'
+          ? 'admin'
+          : 'member'
+      );
+    }
+
+    void loadRole();
+  }, []);
 
   const location =
     useLocation();
@@ -87,16 +418,55 @@ function Shell({
   const pageTitle =
     location.pathname === '/'
       ? 'Dashboard'
-      : location.pathname ===
-          '/create'
+      : location.pathname === '/create'
         ? 'Create Pass'
-        : location.pathname ===
-            '/guests'
+        : location.pathname === '/guests'
           ? 'Guests'
-          : location.pathname ===
-              '/scanner'
+          : location.pathname === '/scanner'
             ? 'Scanner'
-            : 'Event Settings';
+            : location.pathname === '/requests'
+              ? 'Requests'
+              : 'Event Settings';
+
+  /* =========================================================
+     MEMBER NAVIGATION
+  ========================================================= */
+
+  const memberNav: NavItem[] = [
+    {
+      to: '/',
+      icon: 'dashboard',
+      label: 'Dashboard',
+    },
+    {
+      to: '/requests',
+      icon: 'ticket',
+      label: 'My Requests',
+    },
+    {
+      to: '/scanner',
+      icon: 'scanner',
+      label: 'Scanner',
+    },
+  ];
+
+  /* =========================================================
+     ADMIN NAVIGATION
+  ========================================================= */
+
+  const adminNav: NavItem[] = [
+    ...nav,
+    {
+      to: '/requests',
+      icon: 'users',
+      label: 'Requests',
+    },
+  ];
+
+  const currentNav =
+    role === 'member'
+      ? memberNav
+      : adminNav;
 
   return (
     <div className="relative z-10 min-h-screen lg:flex">
@@ -127,7 +497,7 @@ function Shell({
 
         <nav className="flex flex-1 items-center justify-around gap-1 lg:flex-col lg:items-stretch lg:justify-start lg:gap-2">
 
-          {nav.map(
+          {currentNav.map(
             (item) => (
               <NavLink
                 key={item.to}
@@ -212,14 +582,15 @@ function Shell({
           className="rounded-xl px-3 py-3 text-zinc-500 lg:hidden"
           aria-label="Sign out"
         >
+
           <Icon
             name="logout"
             size={18}
           />
+
         </button>
 
       </aside>
-
 
       {/* MAIN */}
 
@@ -302,78 +673,157 @@ function Shell({
 
           </header>
 
-
           {/* ROUTES */}
 
-          <Routes>
+          {role === null ? (
 
-            <Route
-              path="/"
-              element={
-                <Dashboard
-                  ev={ev}
-                />
-              }
-            />
+            <div className="grid min-h-[400px] place-items-center">
 
-            <Route
-              path="/create"
-              element={
-                <CreatePass
-                  ev={ev}
-                  events={events}
-                  onSelected={
-                    onSelected
-                  }
-                />
-              }
-            />
+              <div className="text-center">
 
-            <Route
-              path="/guests"
-              element={
-                <Guests
-                  ev={ev}
-                />
-              }
-            />
+                <div className="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-white/10 border-t-amber-300" />
 
-            <Route
-              path="/scanner"
-              element={
-                <Scanner
-                  ev={ev}
-                />
-              }
-            />
+                <p className="mt-4 text-[9px] uppercase tracking-[.3em] text-zinc-600">
+                  Loading profile
+                </p>
 
-            <Route
-              path="/settings"
-              element={
-                <Settings
-                  ev={ev}
-                  events={events}
-                  onSaved={
-                    onSaved
-                  }
-                  onSelected={
-                    onSelected
-                  }
-                />
-              }
-            />
+              </div>
 
-            <Route
-              path="*"
-              element={
-                <Navigate
-                  to="/"
-                  replace
-                />
-              }
-            />
+            </div>
 
-          </Routes>
+          ) : role === 'member' ? (
+
+            <Routes>
+
+              <Route
+                path="/"
+                element={
+                  <MemberDashboard
+                    ev={ev}
+                  />
+                }
+              />
+
+              <Route
+                path="/requests"
+                element={
+                  <Requests
+                    role="member"
+                    event={ev}
+                  />
+                }
+              />
+
+              {/* MEMBER SCANNER */}
+
+              <Route
+                path="/scanner"
+                element={
+                  <Scanner
+                    ev={ev}
+                  />
+                }
+              />
+
+              <Route
+                path="*"
+                element={
+                  <Navigate
+                    to="/"
+                    replace
+                  />
+                }
+              />
+
+            </Routes>
+
+          ) : (
+
+            <Routes>
+
+              {/* ADMIN REQUESTS */}
+
+              <Route
+                path="/requests"
+                element={
+                  <Requests
+                    role="admin"
+                    event={ev}
+                  />
+                }
+              />
+
+              <Route
+                path="/"
+                element={
+                  <Dashboard
+                    ev={ev}
+                  />
+                }
+              />
+
+              <Route
+                path="/create"
+                element={
+                  <CreatePass
+                    ev={ev}
+                    events={events}
+                    onSelected={
+                      onSelected
+                    }
+                  />
+                }
+              />
+
+              <Route
+                path="/guests"
+                element={
+                  <Guests
+                    ev={ev}
+                  />
+                }
+              />
+
+              {/* ADMIN SCANNER */}
+
+              <Route
+                path="/scanner"
+                element={
+                  <Scanner
+                    ev={ev}
+                  />
+                }
+              />
+
+              <Route
+                path="/settings"
+                element={
+                  <Settings
+                    ev={ev}
+                    events={events}
+                    onSaved={
+                      onSaved
+                    }
+                    onSelected={
+                      onSelected
+                    }
+                  />
+                }
+              />
+
+              <Route
+                path="*"
+                element={
+                  <Navigate
+                    to="/"
+                    replace
+                  />
+                }
+              />
+
+            </Routes>
+
+          )}
 
         </div>
 
@@ -382,6 +832,10 @@ function Shell({
     </div>
   );
 }
+
+/* =========================================================
+   APP
+========================================================= */
 
 export default function App() {
 
@@ -437,8 +891,9 @@ export default function App() {
       navigator.onLine
     );
 
-
-  /* AUTH */
+  /* =====================================================
+     AUTH
+  ===================================================== */
 
   useEffect(() => {
 
@@ -528,15 +983,18 @@ export default function App() {
 
   }, []);
 
-
-  /* LOAD EVENTS */
+  /* =====================================================
+     LOAD EVENTS
+  ===================================================== */
 
   useEffect(() => {
 
     if (!session) {
 
       setEvents([]);
+
       setEv(null);
+
       setEventsLoading(
         false
       );
@@ -588,6 +1046,7 @@ export default function App() {
         );
 
         setEvents([]);
+
         setEv(null);
 
         setEventsLoading(
@@ -659,8 +1118,9 @@ export default function App() {
 
   }, [session]);
 
-
-  /* SELECT */
+  /* =====================================================
+     SELECT EVENT
+  ===================================================== */
 
   function handleSelected(
     event: EventRow
@@ -677,8 +1137,9 @@ export default function App() {
 
   }
 
-
-  /* SAVE */
+  /* =====================================================
+     SAVE EVENT
+  ===================================================== */
 
   function handleSaved(
     event: EventRow
@@ -720,8 +1181,9 @@ export default function App() {
 
   }
 
-
-  /* LOADING */
+  /* =====================================================
+     LOADING
+  ===================================================== */
 
   if (authLoading) {
 
@@ -731,7 +1193,9 @@ export default function App() {
         <VyraBackground />
 
         <div className="relative z-10 grid min-h-screen place-items-center text-zinc-500">
+
           Loading PartyPass…
+
         </div>
 
       </div>
@@ -739,8 +1203,9 @@ export default function App() {
 
   }
 
-
-  /* LOGIN */
+  /* =====================================================
+     LOGIN
+  ===================================================== */
 
   if (!session) {
 
@@ -750,7 +1215,9 @@ export default function App() {
         <VyraBackground />
 
         <div className="relative z-10">
+
           <Login />
+
         </div>
 
       </div>
@@ -758,8 +1225,9 @@ export default function App() {
 
   }
 
-
-  /* EVENTS LOADING */
+  /* =====================================================
+     EVENTS LOADING
+  ===================================================== */
 
   if (eventsLoading) {
 
@@ -787,8 +1255,9 @@ export default function App() {
 
   }
 
-
-  /* EVENT ERROR */
+  /* =====================================================
+     EVENT ERROR
+  ===================================================== */
 
   if (loadError) {
 
@@ -833,8 +1302,9 @@ export default function App() {
 
   }
 
-
-  /* NO EVENT */
+  /* =====================================================
+     NO EVENT
+  ===================================================== */
 
   if (!ev) {
 
@@ -863,8 +1333,9 @@ export default function App() {
 
   }
 
-
-  /* APP */
+  /* =====================================================
+     MAIN APP
+  ===================================================== */
 
   return (
     <div className="relative min-h-screen">
