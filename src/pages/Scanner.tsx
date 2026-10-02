@@ -10,14 +10,17 @@ interface ScannerProps {
 
 type ScanResult = "valid" | "already" | "revoked" | "invalid" | null;
 
-interface GuestRow {
-  id: string;
-  event_id: string;
-  name: string;
-  pass_id: string;
-  qr_token: string;
-  status: "valid" | "checked_in" | "revoked";
-  checked_in_at: string | null;
+interface CheckInResponse {
+  success?: boolean;
+  result?: "valid" | "already" | "revoked" | "invalid" | "unauthorized";
+  message?: string;
+  guest_name?: string;
+  pass_id?: string;
+  pass_type?: string;
+
+  // Supports the current database response.
+  status?: string;
+  checked_in_at?: string | null;
 }
 
 interface ScanRecord {
@@ -33,9 +36,6 @@ function extractToken(value: string): string {
 
   if (!raw) return "";
 
-  // QR can contain:
-  // https://pass-navy-two.vercel.app/verify/TOKEN
-  // OR just TOKEN
   try {
     const url = new URL(raw);
     const parts = url.pathname.split("/").filter(Boolean);
@@ -44,7 +44,7 @@ function extractToken(value: string): string {
       return decodeURIComponent(parts[parts.length - 1]).trim();
     }
   } catch {
-    // Not a URL, so use the raw value.
+    // Not a URL. Use the raw value.
   }
 
   return raw;
@@ -53,16 +53,48 @@ function extractToken(value: string): string {
 function resultLabel(result: ScanResult): string {
   switch (result) {
     case "valid":
-      return "VALID — ENTRY APPROVED";
+      return "✓ CHECK-IN SUCCESSFUL";
     case "already":
-      return "ALREADY CHECKED IN";
+      return "⚠ ALREADY CHECKED IN";
     case "revoked":
-      return "PASS REVOKED";
+      return "✕ PASS REVOKED";
     case "invalid":
-      return "INVALID PASS";
+      return "✕ INVALID QR / PASS ID";
     default:
       return "";
   }
+}
+
+function cameraErrorMessage(err: unknown): string {
+  const name =
+    err && typeof err === "object" && "name" in err
+      ? String((err as { name: unknown }).name)
+      : "";
+
+  const text = err instanceof Error ? err.message : String(err ?? "");
+
+  if (
+    name === "NotAllowedError" ||
+    /permission|denied|notallowed/i.test(text)
+  ) {
+    return "Camera permission was denied. Allow camera access in your browser settings, or use Enter Pass ID below.";
+  }
+
+  if (
+    name === "NotFoundError" ||
+    /no camera|not found|requested device/i.test(text)
+  ) {
+    return "No camera was found on this device. Use Enter Pass ID below.";
+  }
+
+  if (
+    name === "NotReadableError" ||
+    /not readable|in use/i.test(text)
+  ) {
+    return "The camera is being used by another app. Close it and try again.";
+  }
+
+  return text || "Could not start the camera. Use Enter Pass ID below.";
 }
 
 export default function Scanner({ ev }: ScannerProps) {
@@ -76,6 +108,7 @@ export default function Scanner({ ev }: ScannerProps) {
   const [result, setResult] = useState<ScanResult>(null);
   const [resultName, setResultName] = useState("");
   const [resultPassId, setResultPassId] = useState("");
+  const [resultPassType, setResultPassType] = useState("");
   const [error, setError] = useState("");
   const [records, setRecords] = useState<ScanRecord[]>([]);
 
@@ -120,6 +153,12 @@ export default function Scanner({ ev }: ScannerProps) {
     setRecords((old) => [record, ...old].slice(0, 10));
   }
 
+  function releaseToken() {
+    window.setTimeout(() => {
+      lastTokenRef.current = "";
+    }, 1800);
+  }
+
   async function processValue(value: string) {
     if (processingRef.current) return;
 
@@ -127,7 +166,7 @@ export default function Scanner({ ev }: ScannerProps) {
 
     if (!token) {
       setResult("invalid");
-      setError("QR code does not contain a valid token.");
+      setError("Invalid QR / Pass ID.");
       return;
     }
 
@@ -142,217 +181,134 @@ export default function Scanner({ ev }: ScannerProps) {
     setResult(null);
     setResultName("");
     setResultPassId("");
+    setResultPassType("");
 
     try {
+      const { data, error: rpcError } = await supabase.rpc("pp_check_in", {
+        p_token: token,
+      });
+
+      if (rpcError) {
+        console.error("pp_check_in RPC error:", rpcError);
+        throw new Error(`Could not check in guest: ${rpcError.message}`);
+      }
+
+      const res = data as CheckInResponse | null;
+
+      if (!res || typeof res !== "object") {
+        throw new Error("Unexpected response from the check-in service.");
+      }
+
+      const name = res.guest_name || "";
+      const passId = res.pass_id || "";
+      const passType = res.pass_type || "";
+
+      setResultName(name);
+      setResultPassId(passId);
+      setResultPassType(passType);
+
       /*
-       * STEP 1
-       * Find the guest ONLY by QR token.
-       *
        * IMPORTANT:
-       * We do NOT compare the token against the currently selected event.
-       * A genuine QR should not become "invalid" because the scanner
-       * happened to have another event selected.
+       *
+       * Your current database can return:
+       *
+       * status: "CHECKED_IN"
+       *
+       * instead of:
+       *
+       * result: "valid"
+       *
+       * Treat CHECKED_IN as a successful first check-in.
        */
 
-      const { data: guest, error: lookupError } = await supabase
-        .from("guests")
-        .select(
-          "id,event_id,name,pass_id,qr_token,status,checked_in_at"
-        )
-        .eq("qr_token", token)
-        .maybeSingle();
+      const databaseStatus = String(res.status || "").toUpperCase();
+      const databaseResult = String(res.result || "").toLowerCase();
 
-      if (lookupError) {
-        console.error("Guest lookup error:", lookupError);
-        throw new Error(
-          `Supabase lookup failed: ${lookupError.message}`
-        );
-      }
+      if (
+        databaseResult === "valid" ||
+        databaseStatus === "CHECKED_IN"
+      ) {
+        setResult("valid");
+        setError("");
+        addRecord("valid", name, passId);
 
-      /*
-       * No matching token = fake/invalid QR.
-       */
-      if (!guest) {
-        setResult("invalid");
-        setError(
-          "This QR token was not found in the Supabase guest list."
-        );
+        toast.success("Check-in successful");
 
-        addRecord("invalid");
-
-        toast.error("Invalid pass.");
-
-        window.setTimeout(() => {
-          lastTokenRef.current = "";
-        }, 1800);
-
+        releaseToken();
         return;
       }
 
-      const typedGuest = guest as GuestRow;
-
-      /*
-       * STEP 2
-       * Check current status.
-       */
-
-      if (typedGuest.status === "revoked") {
-        setResult("revoked");
-        setResultName(typedGuest.name || "");
-        setResultPassId(typedGuest.pass_id || "");
-
-        addRecord(
-          "revoked",
-          typedGuest.name,
-          typedGuest.pass_id
-        );
-
-        setError("This pass has been revoked.");
-        toast.error("Pass revoked.");
-
-        window.setTimeout(() => {
-          lastTokenRef.current = "";
-        }, 1800);
-
-        return;
-      }
-
-      if (typedGuest.status === "checked_in") {
+      if (
+        databaseResult === "already" ||
+        databaseStatus === "ALREADY_CHECKED_IN"
+      ) {
         setResult("already");
-        setResultName(typedGuest.name || "");
-        setResultPassId(typedGuest.pass_id || "");
-
-        addRecord(
-          "already",
-          typedGuest.name,
-          typedGuest.pass_id
-        );
 
         setError(
-          typedGuest.checked_in_at
-            ? `Checked in at ${new Date(
-                typedGuest.checked_in_at
-              ).toLocaleTimeString()}`
-            : "This pass has already been used."
+          res.checked_in_at
+            ? `This pass has already been checked in (${new Date(
+                res.checked_in_at
+              ).toLocaleTimeString()}).`
+            : res.message || "This pass has already been checked in."
         );
 
+        addRecord("already", name, passId);
         toast.error("Already checked in.");
 
-        window.setTimeout(() => {
-          lastTokenRef.current = "";
-        }, 1800);
-
+        releaseToken();
         return;
       }
 
-      /*
-       * STEP 3
-       * It is a valid unused pass.
-       *
-       * Change:
-       * valid -> checked_in
-       */
-
-      const { error: updateError } = await supabase.rpc("pp_check_in", { p_token: token });
-
-      if (updateError) {
-        console.error("Guest update error:", updateError);
-
-        throw new Error(
-          `Could not check in guest: ${updateError.message}`
-        );
-      }
-
-      /*
-       * STEP 4
-       * Read the row again to confirm that the database actually changed.
-       */
-
-      const { data: verifiedGuest, error: verifyError } =
-        await supabase
-          .from("guests")
-          .select(
-            "id,event_id,name,pass_id,qr_token,status,checked_in_at"
-          )
-          .eq("id", typedGuest.id)
-          .maybeSingle();
-
-      if (verifyError) {
-        console.error("Verification lookup error:", verifyError);
-        throw new Error(
-          `Check-in succeeded but verification failed: ${verifyError.message}`
-        );
-      }
-
-      if (!verifiedGuest) {
-        throw new Error(
-          "Guest was found initially, but could not be read after check-in."
-        );
-      }
-
-      const finalGuest = verifiedGuest as GuestRow;
-
-      /*
-       * STEP 5
-       * Final result.
-       */
-
-      if (finalGuest.status === "checked_in") {
-        setResult("valid");
-        setResultName(finalGuest.name || "");
-        setResultPassId(finalGuest.pass_id || "");
-
-        addRecord(
-          "valid",
-          finalGuest.name,
-          finalGuest.pass_id
-        );
-
-        setError("");
-        toast.success("ENTRY APPROVED");
-
-        window.setTimeout(() => {
-          lastTokenRef.current = "";
-        }, 1800);
-
-        return;
-      }
-
-      if (finalGuest.status === "revoked") {
+      if (
+        databaseResult === "revoked" ||
+        databaseStatus === "REVOKED" ||
+        databaseStatus === "REVOKED_PASS"
+      ) {
         setResult("revoked");
-        setResultName(finalGuest.name || "");
-        setResultPassId(finalGuest.pass_id || "");
+        setError(res.message || "This pass has been revoked.");
 
-        addRecord(
-          "revoked",
-          finalGuest.name,
-          finalGuest.pass_id
-        );
-
-        setError("This pass has been revoked.");
+        addRecord("revoked", name, passId);
         toast.error("Pass revoked.");
 
-        window.setTimeout(() => {
-          lastTokenRef.current = "";
-        }, 1800);
-
+        releaseToken();
         return;
       }
 
-      setResult("invalid");
-      setError(
-        `Unexpected pass status: ${finalGuest.status}`
-      );
+      if (
+        databaseResult === "unauthorized" ||
+        databaseStatus === "UNAUTHORIZED"
+      ) {
+        setResult("invalid");
+        setError("You must be logged in to scan passes.");
 
-      addRecord(
-        "invalid",
-        finalGuest.name,
-        finalGuest.pass_id
-      );
+        addRecord("invalid");
+        toast.error("Not logged in.");
 
-      window.setTimeout(() => {
-        lastTokenRef.current = "";
-      }, 1800);
+        releaseToken();
+        return;
+      }
+
+      if (
+        databaseResult === "invalid" ||
+        databaseStatus === "INVALID"
+      ) {
+        setResult("invalid");
+        setError(res.message || "Invalid QR / Pass ID.");
+
+        addRecord("invalid");
+        toast.error("Invalid QR / Pass ID.");
+
+        releaseToken();
+        return;
+      }
+
+      // Unknown response
+      console.error("Unknown check-in response:", res);
+
+      throw new Error(
+        res.message ||
+          `Unexpected pass status: ${res.status || res.result || "UNKNOWN"}`
+      );
     } catch (err) {
       console.error("Scanner error:", err);
 
@@ -364,12 +320,9 @@ export default function Scanner({ ev }: ScannerProps) {
       );
 
       addRecord("invalid");
-
       toast.error("Scanner validation failed.");
 
-      window.setTimeout(() => {
-        lastTokenRef.current = "";
-      }, 1800);
+      releaseToken();
     } finally {
       processingRef.current = false;
     }
@@ -412,12 +365,7 @@ export default function Scanner({ ev }: ScannerProps) {
 
       runningRef.current = false;
       setRunning(false);
-
-      setError(
-        err instanceof Error
-          ? err.message
-          : "Could not start the camera."
-      );
+      setError(cameraErrorMessage(err));
     }
   }
 
@@ -446,11 +394,12 @@ export default function Scanner({ ev }: ScannerProps) {
     const value = manual.trim();
 
     if (!value) {
-      setError("Enter a QR URL or token.");
+      setError("Enter a Pass ID (e.g. VYRA-ABC123) or QR link.");
       return;
     }
 
     await processValue(value);
+    setManual("");
   }
 
   const resultColor =
@@ -462,11 +411,7 @@ export default function Scanner({ ev }: ScannerProps) {
 
   return (
     <div style={{ maxWidth: 1100, margin: "0 auto" }}>
-      <div
-        style={{
-          marginBottom: 20,
-        }}
-      >
+      <div style={{ marginBottom: 20 }}>
         <div
           style={{
             fontSize: 12,
@@ -485,7 +430,7 @@ export default function Scanner({ ev }: ScannerProps) {
             fontWeight: 800,
           }}
         >
-          Scan Guest Pass
+          Scanner
         </h1>
 
         <div
@@ -495,8 +440,7 @@ export default function Scanner({ ev }: ScannerProps) {
             color: "var(--text2)",
           }}
         >
-          {ev?.name || "Event"}{" "}
-          {ev?.date ? `• ${ev.date}` : ""}
+          {ev?.name || "Event"} {ev?.date ? `• ${ev.date}` : ""}
         </div>
       </div>
 
@@ -510,12 +454,7 @@ export default function Scanner({ ev }: ScannerProps) {
       >
         {/* CAMERA */}
 
-        <div
-          className="card"
-          style={{
-            padding: 20,
-          }}
-        >
+        <div className="card" style={{ padding: 20 }}>
           <div
             style={{
               fontSize: 12,
@@ -525,7 +464,7 @@ export default function Scanner({ ev }: ScannerProps) {
               marginBottom: 12,
             }}
           >
-            Camera Scanner
+            Scan Guest QR
           </div>
 
           <div
@@ -550,9 +489,7 @@ export default function Scanner({ ev }: ScannerProps) {
               <button
                 className="btn"
                 onClick={startScanner}
-                style={{
-                  width: "100%",
-                }}
+                style={{ width: "100%" }}
               >
                 START CAMERA
               </button>
@@ -560,9 +497,7 @@ export default function Scanner({ ev }: ScannerProps) {
               <button
                 className="btn"
                 onClick={stopScanner}
-                style={{
-                  width: "100%",
-                }}
+                style={{ width: "100%" }}
               >
                 STOP CAMERA
               </button>
@@ -572,12 +507,7 @@ export default function Scanner({ ev }: ScannerProps) {
 
         {/* RESULT */}
 
-        <div
-          className="card"
-          style={{
-            padding: 20,
-          }}
-        >
+        <div className="card" style={{ padding: 20 }}>
           <div
             style={{
               fontSize: 12,
@@ -598,21 +528,23 @@ export default function Scanner({ ev }: ScannerProps) {
               justifyContent: "center",
               alignItems: "center",
               textAlign: "center",
-              borderRadius: 18,
               border:
                 result === "valid"
                   ? "1px solid rgba(34,197,94,.35)"
-                  : result === "revoked" ||
-                      result === "invalid"
-                    ? "1px solid rgba(239,68,68,.35)"
-                    : "1px solid rgba(255,255,255,.08)",
+                  : result === "already"
+                    ? "1px solid rgba(252,211,77,.35)"
+                    : result === "revoked" || result === "invalid"
+                      ? "1px solid rgba(239,68,68,.35)"
+                      : "1px solid rgba(255,255,255,.08)",
               background:
                 result === "valid"
                   ? "rgba(34,197,94,.07)"
-                  : result === "revoked" ||
-                      result === "invalid"
-                    ? "rgba(239,68,68,.07)"
-                    : "rgba(255,255,255,.025)",
+                  : result === "already"
+                    ? "rgba(252,211,77,.07)"
+                    : result === "revoked" || result === "invalid"
+                      ? "rgba(239,68,68,.07)"
+                      : "rgba(255,255,255,.025)",
+              borderRadius: 18,
               padding: 20,
               boxSizing: "border-box",
             }}
@@ -677,6 +609,20 @@ export default function Scanner({ ev }: ScannerProps) {
                     {resultPassId}
                   </div>
                 )}
+
+                {resultPassType && (
+                  <div
+                    style={{
+                      marginTop: 5,
+                      fontSize: 12,
+                      color: "var(--text2)",
+                      textTransform: "uppercase",
+                      letterSpacing: 1,
+                    }}
+                  >
+                    {resultPassType}
+                  </div>
+                )}
               </>
             )}
           </div>
@@ -704,8 +650,7 @@ export default function Scanner({ ev }: ScannerProps) {
             style={{
               marginTop: 20,
               paddingTop: 18,
-              borderTop:
-                "1px solid rgba(255,255,255,.08)",
+              borderTop: "1px solid rgba(255,255,255,.08)",
             }}
           >
             <div
@@ -715,15 +660,17 @@ export default function Scanner({ ev }: ScannerProps) {
                 marginBottom: 8,
               }}
             >
-              Manual Validation
+              Enter Pass ID
             </div>
 
             <input
               value={manual}
-              onChange={(e) =>
-                setManual(e.target.value)
-              }
-              placeholder="Paste QR URL or token"
+              onChange={(e) => setManual(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") manualCheck();
+              }}
+              placeholder="e.g. VYRA-ABC123"
+              autoCapitalize="characters"
               style={{
                 width: "100%",
                 boxSizing: "border-box",
@@ -799,8 +746,7 @@ export default function Scanner({ ev }: ScannerProps) {
                   padding: "12px 13px",
                   borderRadius: 10,
                   border: "1px solid var(--hair)",
-                  background:
-                    "rgba(255,255,255,.02)",
+                  background: "rgba(255,255,255,.02)",
                 }}
               >
                 <div>
@@ -827,11 +773,7 @@ export default function Scanner({ ev }: ScannerProps) {
                   )}
                 </div>
 
-                <div
-                  style={{
-                    textAlign: "right",
-                  }}
-                >
+                <div style={{ textAlign: "right" }}>
                   <div
                     style={{
                       fontSize: 10,
