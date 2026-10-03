@@ -708,8 +708,9 @@ function Shell({
                 path="/requests"
                 element={
                   <Requests
-                    role="member"
-                    event={ev}
+                    ev={ev}
+                    events={events}
+                    onSelected={onSelected}
                   />
                 }
               />
@@ -747,8 +748,9 @@ function Shell({
                 path="/requests"
                 element={
                   <Requests
-                    role="admin"
-                    event={ev}
+                    ev={ev}
+                    events={events}
+                    onSelected={onSelected}
                   />
                 }
               />

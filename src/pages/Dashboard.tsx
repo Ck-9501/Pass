@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useState,
 } from 'react';
@@ -19,103 +20,82 @@ export default function Dashboard({
 }: {
   ev: EventRow;
 }) {
-  const [rows, setRows] =
-    useState<Guest[]>([]);
+  type AdminGuest = Guest & {
+    created_by_name?: string | null;
+  };
 
-  const [counts, setCounts] =
-    useState({
-      total: 0,
-      checked: 0,
-      revoked: 0,
-    });
+  const [rows, setRows] =
+    useState<AdminGuest[]>([]);
+
+  const [totalHeads, setTotalHeads] =
+    useState(0);
 
   const [loading, setLoading] =
     useState(true);
 
-  useEffect(() => {
+  const getHeadCount = (passType: string | null | undefined) =>
+    passType === "Couple" ? 2 : 1;
 
+  const loadDashboard = useCallback(async () => {
+    const { data, error } = await supabase
+      .from('guests')
+      .select('*')
+      .eq('event_id', ev.id)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      toast.error('Could not load dashboard data.');
+      return;
+    }
+
+    const guests = (data as AdminGuest[]) || [];
+
+    setRows(guests);
+    setTotalHeads(
+      guests.reduce(
+        (sum, guest) => sum + getHeadCount(guest.pass_type),
+        0
+      )
+    );
+  }, [ev.id]);
+
+  useEffect(() => {
     let mounted = true;
 
     (async () => {
-
-      const [
-        recent,
-        total,
-        checked,
-        revoked,
-      ] = await Promise.all([
-
-        supabase
-          .from('guests')
-          .select('*')
-          .eq('event_id', ev.id)
-          .order('created_at', {
-            ascending: false,
-          })
-          .limit(6),
-
-        supabase
-          .from('guests')
-          .select('id', {
-            count: 'exact',
-            head: true,
-          })
-          .eq('event_id', ev.id),
-
-        supabase
-          .from('guests')
-          .select('id', {
-            count: 'exact',
-            head: true,
-          })
-          .eq('event_id', ev.id)
-          .eq('status', 'checked_in'),
-
-        supabase
-          .from('guests')
-          .select('id', {
-            count: 'exact',
-            head: true,
-          })
-          .eq('event_id', ev.id)
-          .eq('status', 'revoked'),
-
-      ]);
-
-      if (!mounted) {
-        return;
-      }
-
-      if (
-        recent.error ||
-        total.error ||
-        checked.error ||
-        revoked.error
-      ) {
-        toast.error(
-          'Could not load dashboard data.'
-        );
-      }
-
-      setRows(
-        (recent.data as Guest[]) || []
-      );
-
-      setCounts({
-        total: total.count || 0,
-        checked: checked.count || 0,
-        revoked: revoked.count || 0,
-      });
-
-      setLoading(false);
-
+      if (!mounted) return;
+      setLoading(true);
+      await loadDashboard();
+      if (mounted) setLoading(false);
     })();
+
+    const channel = supabase
+      .channel(`dashboard-guests-${ev.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'guests',
+          filter: `event_id=eq.${ev.id}`,
+        },
+        () => {
+          void loadDashboard();
+        }
+      )
+      .subscribe();
 
     return () => {
       mounted = false;
+      void supabase.removeChannel(channel);
     };
+  }, [ev.id, loadDashboard]);
 
-  }, [ev.id]);
+  const counts = {
+    total: rows.length,
+    checked: rows.filter((g) => g.status === 'checked_in').length,
+    revoked: rows.filter((g) => g.status === 'revoked').length,
+  };
 
   const notArrived = Math.max(
     counts.total -
@@ -126,22 +106,22 @@ export default function Dashboard({
 
   const stats = [
     {
-      label: 'TOTAL GUESTS',
+      label: 'TOTAL PASSES',
       value: counts.total,
-      icon: 'users' as const,
+      icon: 'ticket' as const,
       color: 'text-amber-200',
+    },
+    {
+      label: 'TOTAL HEADS',
+      value: totalHeads,
+      icon: 'users' as const,
+      color: 'text-blue-200',
     },
     {
       label: 'CHECKED IN',
       value: counts.checked,
       icon: 'check' as const,
       color: 'text-emerald-300',
-    },
-    {
-      label: 'NOT ARRIVED',
-      value: notArrived,
-      icon: 'clock' as const,
-      color: 'text-amber-100',
     },
     {
       label: 'REVOKED',
@@ -396,26 +376,18 @@ export default function Dashboard({
 
             <div className="overflow-x-auto">
 
-              <table className="w-full min-w-[620px] text-left">
+              <table className="w-full min-w-[980px] text-left">
 
                 <thead className="text-[9px] uppercase tracking-[.2em] text-zinc-600">
 
                   <tr>
-                    <th className="px-3 py-3">
-                      Name
-                    </th>
-
-                    <th className="px-3 py-3">
-                      Pass Type
-                    </th>
-
-                    <th className="px-3 py-3">
-                      Status
-                    </th>
-
-                    <th className="px-3 py-3">
-                      Check-in Time
-                    </th>
+                    <th className="px-3 py-3">Name</th>
+                    <th className="px-3 py-3">Pass Type</th>
+                    <th className="px-3 py-3">Heads</th>
+                    <th className="px-3 py-3">Generated By</th>
+                    <th className="px-3 py-3">Status</th>
+                    <th className="px-3 py-3">Check-in Time</th>
+                    <th className="px-3 py-3">Action</th>
                   </tr>
 
                 </thead>
@@ -443,6 +415,14 @@ export default function Dashboard({
                           {guest.pass_type}
                         </td>
 
+                        <td className="px-3 py-4 text-xs text-zinc-300">
+                          {getHeadCount(guest.pass_type)}
+                        </td>
+
+                        <td className="px-3 py-4 text-xs text-zinc-400">
+                          {guest.created_by_name || 'Unknown'}
+                        </td>
+
                         <td className="px-3 py-4">
 
                           <span
@@ -457,10 +437,33 @@ export default function Dashboard({
 
                         <td className="px-3 py-4 text-xs text-zinc-600">
                           {guest.checked_in_at
-                            ? formatTime(
-                                guest.checked_in_at
-                              )
+                            ? formatTime(guest.checked_in_at)
                             : '—'}
+                        </td>
+
+                        <td className="px-3 py-4">
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              if (!window.confirm(`Delete pass for ${guest.name}?`)) return;
+
+                              const { error: deleteError } = await supabase
+                                .from('guests')
+                                .delete()
+                                .eq('id', guest.id);
+
+                              if (deleteError) {
+                                toast.error(deleteError.message);
+                                return;
+                              }
+
+                              toast.success('Pass deleted.');
+                              await loadDashboard();
+                            }}
+                            className="rounded-xl border border-red-400/15 px-3 py-2 text-xs text-red-300 transition hover:bg-red-400/[.06]"
+                          >
+                            Delete
+                          </button>
                         </td>
 
                       </tr>
