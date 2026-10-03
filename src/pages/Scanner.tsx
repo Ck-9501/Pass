@@ -17,8 +17,6 @@ interface CheckInResponse {
   guest_name?: string;
   pass_id?: string;
   pass_type?: string;
-
-  // Supports the current database response.
   status?: string;
   checked_in_at?: string | null;
 }
@@ -31,22 +29,107 @@ interface ScanRecord {
   time: string;
 }
 
+/*
+ * Extract the actual pass token from whatever the QR contains.
+ *
+ * Supports:
+ * 1. Direct token:
+ *    VYRA-ABC123
+ *
+ * 2. URL:
+ *    https://your-site.com/check/VYRA-ABC123
+ *
+ * 3. URL query:
+ *    https://your-site.com/check?token=VYRA-ABC123
+ *
+ * 4. URL query:
+ *    https://your-site.com/?pass_id=VYRA-ABC123
+ *
+ * 5. URL query:
+ *    https://your-site.com/?token=VYRA-ABC123
+ */
 function extractToken(value: string): string {
   const raw = value.trim();
 
   if (!raw) return "";
 
+  /*
+   * First try to interpret the QR value as a URL.
+   */
   try {
     const url = new URL(raw);
+
+    // ?token=VYRA-ABC123
+    const token =
+      url.searchParams.get("token") ||
+      url.searchParams.get("pass_token") ||
+      url.searchParams.get("qr_token");
+
+    if (token?.trim()) {
+      return decodeURIComponent(token.trim());
+    }
+
+    // ?pass_id=VYRA-ABC123
+    const passId = url.searchParams.get("pass_id");
+
+    if (passId?.trim()) {
+      return decodeURIComponent(passId.trim());
+    }
+
+    /*
+     * If the URL path contains the token, use the last path part.
+     *
+     * Example:
+     * /check/VYRA-ABC123
+     */
     const parts = url.pathname.split("/").filter(Boolean);
 
     if (parts.length > 0) {
-      return decodeURIComponent(parts[parts.length - 1]).trim();
+      const lastPart = decodeURIComponent(
+        parts[parts.length - 1]
+      ).trim();
+
+      /*
+       * Only treat the path as a token if it actually looks
+       * like a VYRA pass ID.
+       */
+      if (/^VYRA[-_]/i.test(lastPart)) {
+        return lastPart;
+      }
+    }
+
+    /*
+     * Some QR systems may encode the token in the URL hash.
+     */
+    const hash = url.hash.replace(/^#/, "").trim();
+
+    if (hash) {
+      const hashParams = new URLSearchParams(hash);
+
+      const hashToken =
+        hashParams.get("token") ||
+        hashParams.get("pass_token") ||
+        hashParams.get("qr_token") ||
+        hashParams.get("pass_id");
+
+      if (hashToken?.trim()) {
+        return decodeURIComponent(hashToken.trim());
+      }
+
+      if (/^VYRA[-_]/i.test(hash)) {
+        return decodeURIComponent(hash);
+      }
     }
   } catch {
-    // Not a URL. Use the raw value.
+    /*
+     * Not a URL.
+     * Continue and treat the scanned value as the token.
+     */
   }
 
+  /*
+   * Direct QR token.
+   */
   return raw;
 }
 
@@ -54,12 +137,16 @@ function resultLabel(result: ScanResult): string {
   switch (result) {
     case "valid":
       return "✓ CHECK-IN SUCCESSFUL";
+
     case "already":
       return "⚠ ALREADY CHECKED IN";
+
     case "revoked":
       return "✕ PASS REVOKED";
+
     case "invalid":
       return "✕ INVALID QR / PASS ID";
+
     default:
       return "";
   }
@@ -67,11 +154,16 @@ function resultLabel(result: ScanResult): string {
 
 function cameraErrorMessage(err: unknown): string {
   const name =
-    err && typeof err === "object" && "name" in err
+    err &&
+    typeof err === "object" &&
+    "name" in err
       ? String((err as { name: unknown }).name)
       : "";
 
-  const text = err instanceof Error ? err.message : String(err ?? "");
+  const text =
+    err instanceof Error
+      ? err.message
+      : String(err ?? "");
 
   if (
     name === "NotAllowedError" ||
@@ -94,7 +186,14 @@ function cameraErrorMessage(err: unknown): string {
     return "The camera is being used by another app. Close it and try again.";
   }
 
-  return text || "Could not start the camera. Use Enter Pass ID below.";
+  if (/secure context|https/i.test(text)) {
+    return "Camera access requires HTTPS. Open the deployed PartyPass website using HTTPS.";
+  }
+
+  return (
+    text ||
+    "Could not start the camera. Use Enter Pass ID below."
+  );
 }
 
 export default function Scanner({ ev }: ScannerProps) {
@@ -105,15 +204,23 @@ export default function Scanner({ ev }: ScannerProps) {
 
   const [running, setRunning] = useState(false);
   const [manual, setManual] = useState("");
-  const [result, setResult] = useState<ScanResult>(null);
+  const [result, setResult] =
+    useState<ScanResult>(null);
+
   const [resultName, setResultName] = useState("");
   const [resultPassId, setResultPassId] = useState("");
-  const [resultPassType, setResultPassType] = useState("");
+  const [resultPassType, setResultPassType] =
+    useState("");
+
   const [error, setError] = useState("");
-  const [records, setRecords] = useState<ScanRecord[]>([]);
+  const [records, setRecords] =
+    useState<ScanRecord[]>([]);
 
   const readerId = "partypass-qr-reader";
 
+  /*
+   * Clean up camera when leaving the page.
+   */
   useEffect(() => {
     return () => {
       const scanner = scannerRef.current;
@@ -134,6 +241,9 @@ export default function Scanner({ ev }: ScannerProps) {
           scanner.clear();
         } catch {}
       }
+
+      scannerRef.current = null;
+      runningRef.current = false;
     };
   }, []);
 
@@ -150,7 +260,9 @@ export default function Scanner({ ev }: ScannerProps) {
       time: new Date().toLocaleTimeString(),
     };
 
-    setRecords((old) => [record, ...old].slice(0, 10));
+    setRecords((old) =>
+      [record, ...old].slice(0, 10)
+    );
   }
 
   function releaseToken() {
@@ -170,6 +282,10 @@ export default function Scanner({ ev }: ScannerProps) {
       return;
     }
 
+    /*
+     * Prevent the camera from sending the same QR
+     * multiple times while it is still in front of it.
+     */
     if (lastTokenRef.current === token) {
       return;
     }
@@ -184,63 +300,83 @@ export default function Scanner({ ev }: ScannerProps) {
     setResultPassType("");
 
     try {
-      const { data, error: rpcError } = await supabase.rpc("pp_check_in", {
+      const {
+        data,
+        error: rpcError,
+      } = await supabase.rpc("pp_check_in", {
         p_token: token,
       });
 
       if (rpcError) {
-        console.error("pp_check_in RPC error:", rpcError);
-        throw new Error(`Could not check in guest: ${rpcError.message}`);
+        console.error(
+          "pp_check_in RPC error:",
+          rpcError
+        );
+
+        throw new Error(
+          `Could not check in guest: ${rpcError.message}`
+        );
       }
 
-      const res = data as CheckInResponse | null;
+      const res =
+        data as CheckInResponse | null;
 
       if (!res || typeof res !== "object") {
-        throw new Error("Unexpected response from the check-in service.");
+        throw new Error(
+          "Unexpected response from the check-in service."
+        );
       }
 
-      const name = res.guest_name || "";
-      const passId = res.pass_id || "";
-      const passType = res.pass_type || "";
+      const name =
+        res.guest_name || "";
+
+      const passId =
+        res.pass_id || "";
+
+      const passType =
+        res.pass_type || "";
 
       setResultName(name);
       setResultPassId(passId);
       setResultPassType(passType);
 
+      const databaseStatus =
+        String(res.status || "").toUpperCase();
+
+      const databaseResult =
+        String(res.result || "").toLowerCase();
+
       /*
-       * IMPORTANT:
-       *
-       * Your current database can return:
-       *
-       * status: "CHECKED_IN"
-       *
-       * instead of:
-       *
-       * result: "valid"
-       *
-       * Treat CHECKED_IN as a successful first check-in.
+       * SUCCESS
        */
-
-      const databaseStatus = String(res.status || "").toUpperCase();
-      const databaseResult = String(res.result || "").toLowerCase();
-
       if (
         databaseResult === "valid" ||
         databaseStatus === "CHECKED_IN"
       ) {
         setResult("valid");
         setError("");
-        addRecord("valid", name, passId);
 
-        toast.success("Check-in successful");
+        addRecord(
+          "valid",
+          name,
+          passId
+        );
+
+        toast.success(
+          "Check-in successful"
+        );
 
         releaseToken();
         return;
       }
 
+      /*
+       * ALREADY CHECKED IN
+       */
       if (
         databaseResult === "already" ||
-        databaseStatus === "ALREADY_CHECKED_IN"
+        databaseStatus ===
+          "ALREADY_CHECKED_IN"
       ) {
         setResult("already");
 
@@ -249,70 +385,123 @@ export default function Scanner({ ev }: ScannerProps) {
             ? `This pass has already been checked in (${new Date(
                 res.checked_in_at
               ).toLocaleTimeString()}).`
-            : res.message || "This pass has already been checked in."
+            : res.message ||
+                "This pass has already been checked in."
         );
 
-        addRecord("already", name, passId);
-        toast.error("Already checked in.");
+        addRecord(
+          "already",
+          name,
+          passId
+        );
+
+        toast.error(
+          "Already checked in."
+        );
 
         releaseToken();
         return;
       }
 
+      /*
+       * REVOKED
+       */
       if (
         databaseResult === "revoked" ||
         databaseStatus === "REVOKED" ||
-        databaseStatus === "REVOKED_PASS"
+        databaseStatus ===
+          "REVOKED_PASS"
       ) {
         setResult("revoked");
-        setError(res.message || "This pass has been revoked.");
 
-        addRecord("revoked", name, passId);
+        setError(
+          res.message ||
+            "This pass has been revoked."
+        );
+
+        addRecord(
+          "revoked",
+          name,
+          passId
+        );
+
         toast.error("Pass revoked.");
 
         releaseToken();
         return;
       }
 
+      /*
+       * UNAUTHORIZED
+       */
       if (
         databaseResult === "unauthorized" ||
         databaseStatus === "UNAUTHORIZED"
       ) {
         setResult("invalid");
-        setError("You must be logged in to scan passes.");
+
+        setError(
+          "You must be logged in to scan passes."
+        );
 
         addRecord("invalid");
-        toast.error("Not logged in.");
+
+        toast.error(
+          "Not logged in."
+        );
 
         releaseToken();
         return;
       }
 
+      /*
+       * INVALID
+       */
       if (
         databaseResult === "invalid" ||
         databaseStatus === "INVALID"
       ) {
         setResult("invalid");
-        setError(res.message || "Invalid QR / Pass ID.");
+
+        setError(
+          res.message ||
+            "Invalid QR / Pass ID."
+        );
 
         addRecord("invalid");
-        toast.error("Invalid QR / Pass ID.");
+
+        toast.error(
+          "Invalid QR / Pass ID."
+        );
 
         releaseToken();
         return;
       }
 
-      // Unknown response
-      console.error("Unknown check-in response:", res);
+      /*
+       * Unknown response.
+       */
+      console.error(
+        "Unknown check-in response:",
+        res
+      );
 
       throw new Error(
         res.message ||
-          `Unexpected pass status: ${res.status || res.result || "UNKNOWN"}`
+          `Unexpected pass status: ${
+            res.status ||
+            res.result ||
+            "UNKNOWN"
+          }`
       );
     } catch (err) {
-      console.error("Scanner error:", err);
+      console.error(
+        "Scanner error:",
+        err
+      );
 
       setResult("invalid");
+
       setError(
         err instanceof Error
           ? err.message
@@ -320,7 +509,10 @@ export default function Scanner({ ev }: ScannerProps) {
       );
 
       addRecord("invalid");
-      toast.error("Scanner validation failed.");
+
+      toast.error(
+        "Scanner validation failed."
+      );
 
       releaseToken();
     } finally {
@@ -333,44 +525,81 @@ export default function Scanner({ ev }: ScannerProps) {
     setResult(null);
 
     try {
+      /*
+       * Create scanner only once.
+       */
       if (!scannerRef.current) {
-        scannerRef.current = new Html5Qrcode(readerId);
+        scannerRef.current =
+          new Html5Qrcode(readerId);
       }
 
-      if (runningRef.current) return;
+      if (runningRef.current) {
+        return;
+      }
 
       await scannerRef.current.start(
-        { facingMode: "environment" },
+        {
+          facingMode: "environment",
+        },
         {
           fps: 10,
+
           qrbox: {
             width: 260,
             height: 260,
           },
+
           aspectRatio: 1,
+
           disableFlip: false,
         },
+
+        /*
+         * QR FOUND
+         */
         async (decodedText) => {
-          await processValue(decodedText);
+          console.log(
+            "QR detected:",
+            decodedText
+          );
+
+          await processValue(
+            decodedText
+          );
         },
-        () => {
-          // Normal QR frame miss — ignore.
-        }
+
+        /*
+         * QR NOT FOUND IN FRAME
+         * This is normal and should
+         * not show an error.
+         */
+        () => {}
       );
 
       runningRef.current = true;
       setRunning(true);
+
+      toast.success(
+        "Camera ready — scan the guest QR."
+      );
     } catch (err) {
-      console.error("Camera start error:", err);
+      console.error(
+        "Camera start error:",
+        err
+      );
 
       runningRef.current = false;
       setRunning(false);
-      setError(cameraErrorMessage(err));
+
+      setError(
+        cameraErrorMessage(err)
+      );
     }
   }
 
   async function stopScanner() {
-    const scanner = scannerRef.current;
+    const scanner =
+      scannerRef.current;
 
     if (!scanner) return;
 
@@ -379,7 +608,10 @@ export default function Scanner({ ev }: ScannerProps) {
         await scanner.stop();
       }
     } catch (err) {
-      console.warn("Scanner stop warning:", err);
+      console.warn(
+        "Scanner stop warning:",
+        err
+      );
     }
 
     runningRef.current = false;
@@ -394,11 +626,15 @@ export default function Scanner({ ev }: ScannerProps) {
     const value = manual.trim();
 
     if (!value) {
-      setError("Enter a Pass ID (e.g. VYRA-ABC123) or QR link.");
+      setError(
+        "Enter a Pass ID or QR link."
+      );
+
       return;
     }
 
     await processValue(value);
+
     setManual("");
   }
 
@@ -410,14 +646,26 @@ export default function Scanner({ ev }: ScannerProps) {
         : "#fca5a5";
 
   return (
-    <div style={{ maxWidth: 1100, margin: "0 auto" }}>
-      <div style={{ marginBottom: 20 }}>
+    <div
+      style={{
+        maxWidth: 1100,
+        margin: "0 auto",
+      }}
+    >
+      {/* HEADER */}
+
+      <div
+        style={{
+          marginBottom: 20,
+        }}
+      >
         <div
           style={{
             fontSize: 12,
             color: "var(--text3)",
             letterSpacing: 2,
-            textTransform: "uppercase",
+            textTransform:
+              "uppercase",
           }}
         >
           VYRA ENTRY CONTROL
@@ -440,7 +688,10 @@ export default function Scanner({ ev }: ScannerProps) {
             color: "var(--text2)",
           }}
         >
-          {ev?.name || "Event"} {ev?.date ? `• ${ev.date}` : ""}
+          {ev?.name || "Event"}{" "}
+          {ev?.date
+            ? `• ${ev.date}`
+            : ""}
         </div>
       </div>
 
@@ -454,13 +705,19 @@ export default function Scanner({ ev }: ScannerProps) {
       >
         {/* CAMERA */}
 
-        <div className="card" style={{ padding: 20 }}>
+        <div
+          className="card"
+          style={{
+            padding: 20,
+          }}
+        >
           <div
             style={{
               fontSize: 12,
               color: "var(--text3)",
               letterSpacing: 1.5,
-              textTransform: "uppercase",
+              textTransform:
+                "uppercase",
               marginBottom: 12,
             }}
           >
@@ -480,6 +737,19 @@ export default function Scanner({ ev }: ScannerProps) {
 
           <div
             style={{
+              marginTop: 12,
+              textAlign: "center",
+              fontSize: 12,
+              color: "var(--text3)",
+            }}
+          >
+            {running
+              ? "Point the camera at the guest's QR code"
+              : "Start the camera to scan a guest pass"}
+          </div>
+
+          <div
+            style={{
               display: "flex",
               gap: 10,
               marginTop: 14,
@@ -488,16 +758,24 @@ export default function Scanner({ ev }: ScannerProps) {
             {!running ? (
               <button
                 className="btn"
-                onClick={startScanner}
-                style={{ width: "100%" }}
+                onClick={
+                  startScanner
+                }
+                style={{
+                  width: "100%",
+                }}
               >
                 START CAMERA
               </button>
             ) : (
               <button
                 className="btn"
-                onClick={stopScanner}
-                style={{ width: "100%" }}
+                onClick={
+                  stopScanner
+                }
+                style={{
+                  width: "100%",
+                }}
               >
                 STOP CAMERA
               </button>
@@ -507,13 +785,19 @@ export default function Scanner({ ev }: ScannerProps) {
 
         {/* RESULT */}
 
-        <div className="card" style={{ padding: 20 }}>
+        <div
+          className="card"
+          style={{
+            padding: 20,
+          }}
+        >
           <div
             style={{
               fontSize: 12,
               color: "var(--text3)",
               letterSpacing: 1.5,
-              textTransform: "uppercase",
+              textTransform:
+                "uppercase",
             }}
           >
             Latest Scan
@@ -524,29 +808,43 @@ export default function Scanner({ ev }: ScannerProps) {
               marginTop: 15,
               minHeight: 180,
               display: "flex",
-              flexDirection: "column",
-              justifyContent: "center",
+              flexDirection:
+                "column",
+              justifyContent:
+                "center",
               alignItems: "center",
               textAlign: "center",
+
               border:
                 result === "valid"
                   ? "1px solid rgba(34,197,94,.35)"
-                  : result === "already"
+                  : result ===
+                      "already"
                     ? "1px solid rgba(252,211,77,.35)"
-                    : result === "revoked" || result === "invalid"
+                    : result ===
+                          "revoked" ||
+                        result ===
+                          "invalid"
                       ? "1px solid rgba(239,68,68,.35)"
                       : "1px solid rgba(255,255,255,.08)",
+
               background:
                 result === "valid"
                   ? "rgba(34,197,94,.07)"
-                  : result === "already"
+                  : result ===
+                      "already"
                     ? "rgba(252,211,77,.07)"
-                    : result === "revoked" || result === "invalid"
+                    : result ===
+                          "revoked" ||
+                        result ===
+                          "invalid"
                       ? "rgba(239,68,68,.07)"
                       : "rgba(255,255,255,.025)",
+
               borderRadius: 18,
               padding: 20,
-              boxSizing: "border-box",
+              boxSizing:
+                "border-box",
             }}
           >
             {!result && (
@@ -554,7 +852,8 @@ export default function Scanner({ ev }: ScannerProps) {
                 <div
                   style={{
                     fontSize: 15,
-                    color: "var(--text2)",
+                    color:
+                      "var(--text2)",
                   }}
                 >
                   Waiting for QR...
@@ -564,10 +863,12 @@ export default function Scanner({ ev }: ScannerProps) {
                   style={{
                     marginTop: 7,
                     fontSize: 12,
-                    color: "var(--text3)",
+                    color:
+                      "var(--text3)",
                   }}
                 >
-                  Scan a VYRA guest pass
+                  Scan a VYRA guest
+                  pass
                 </div>
               </>
             )}
@@ -578,17 +879,21 @@ export default function Scanner({ ev }: ScannerProps) {
                   style={{
                     fontSize: 22,
                     fontWeight: 800,
-                    color: resultColor,
+                    color:
+                      resultColor,
                   }}
                 >
-                  {resultLabel(result)}
+                  {resultLabel(
+                    result
+                  )}
                 </div>
 
                 {resultName && (
                   <div
                     style={{
                       marginTop: 12,
-                      fontFamily: "Georgia, serif",
+                      fontFamily:
+                        "Georgia, serif",
                       fontSize: 24,
                       fontWeight: 700,
                     }}
@@ -601,9 +906,11 @@ export default function Scanner({ ev }: ScannerProps) {
                   <div
                     style={{
                       marginTop: 7,
-                      fontFamily: "monospace",
+                      fontFamily:
+                        "monospace",
                       fontSize: 12,
-                      color: "var(--text3)",
+                      color:
+                        "var(--text3)",
                     }}
                   >
                     {resultPassId}
@@ -615,8 +922,10 @@ export default function Scanner({ ev }: ScannerProps) {
                     style={{
                       marginTop: 5,
                       fontSize: 12,
-                      color: "var(--text2)",
-                      textTransform: "uppercase",
+                      color:
+                        "var(--text2)",
+                      textTransform:
+                        "uppercase",
                       letterSpacing: 1,
                     }}
                   >
@@ -627,17 +936,22 @@ export default function Scanner({ ev }: ScannerProps) {
             )}
           </div>
 
+          {/* ERROR */}
+
           {error && (
             <div
               style={{
                 marginTop: 12,
                 padding: 12,
                 borderRadius: 10,
-                background: "rgba(239,68,68,.08)",
-                border: "1px solid rgba(239,68,68,.22)",
+                background:
+                  "rgba(239,68,68,.08)",
+                border:
+                  "1px solid rgba(239,68,68,.22)",
                 color: "#fca5a5",
                 fontSize: 12,
-                wordBreak: "break-word",
+                wordBreak:
+                  "break-word",
               }}
             >
               {error}
@@ -650,7 +964,8 @@ export default function Scanner({ ev }: ScannerProps) {
             style={{
               marginTop: 20,
               paddingTop: 18,
-              borderTop: "1px solid rgba(255,255,255,.08)",
+              borderTop:
+                "1px solid rgba(255,255,255,.08)",
             }}
           >
             <div
@@ -665,27 +980,42 @@ export default function Scanner({ ev }: ScannerProps) {
 
             <input
               value={manual}
-              onChange={(e) => setManual(e.target.value)}
+              onChange={(e) =>
+                setManual(
+                  e.target.value
+                )
+              }
               onKeyDown={(e) => {
-                if (e.key === "Enter") manualCheck();
+                if (
+                  e.key === "Enter"
+                ) {
+                  manualCheck();
+                }
               }}
               placeholder="e.g. VYRA-ABC123"
               autoCapitalize="characters"
               style={{
                 width: "100%",
-                boxSizing: "border-box",
-                padding: "12px 13px",
+                boxSizing:
+                  "border-box",
+                padding:
+                  "12px 13px",
                 borderRadius: 10,
-                border: "1px solid var(--hair)",
-                background: "var(--panel2)",
-                color: "var(--text)",
+                border:
+                  "1px solid var(--hair)",
+                background:
+                  "var(--panel2)",
+                color:
+                  "var(--text)",
                 outline: "none",
               }}
             />
 
             <button
               className="btn"
-              onClick={manualCheck}
+              onClick={
+                manualCheck
+              }
               style={{
                 width: "100%",
                 marginTop: 9,
@@ -731,77 +1061,100 @@ export default function Scanner({ ev }: ScannerProps) {
           <div
             style={{
               display: "flex",
-              flexDirection: "column",
+              flexDirection:
+                "column",
               gap: 9,
             }}
           >
-            {records.map((record) => (
-              <div
-                key={record.id}
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  gap: 12,
-                  padding: "12px 13px",
-                  borderRadius: 10,
-                  border: "1px solid var(--hair)",
-                  background: "rgba(255,255,255,.02)",
-                }}
-              >
-                <div>
-                  <div
-                    style={{
-                      fontSize: 13,
-                      fontWeight: 600,
-                    }}
-                  >
-                    {record.name || "Unknown guest"}
+            {records.map(
+              (record) => (
+                <div
+                  key={record.id}
+                  style={{
+                    display: "flex",
+                    justifyContent:
+                      "space-between",
+                    alignItems:
+                      "center",
+                    gap: 12,
+                    padding:
+                      "12px 13px",
+                    borderRadius: 10,
+                    border:
+                      "1px solid var(--hair)",
+                    background:
+                      "rgba(255,255,255,.02)",
+                  }}
+                >
+                  <div>
+                    <div
+                      style={{
+                        fontSize: 13,
+                        fontWeight: 600,
+                      }}
+                    >
+                      {record.name ||
+                        "Unknown guest"}
+                    </div>
+
+                    {record.passId && (
+                      <div
+                        style={{
+                          marginTop: 3,
+                          fontSize: 11,
+                          fontFamily:
+                            "monospace",
+                          color:
+                            "var(--text3)",
+                        }}
+                      >
+                        {
+                          record.passId
+                        }
+                      </div>
+                    )}
                   </div>
 
-                  {record.passId && (
+                  <div
+                    style={{
+                      textAlign:
+                        "right",
+                    }}
+                  >
+                    <div
+                      style={{
+                        fontSize: 10,
+                        fontWeight: 700,
+                        letterSpacing: 1,
+                        color:
+                          record.result ===
+                          "valid"
+                            ? "#86efac"
+                            : record.result ===
+                                "already"
+                              ? "#fcd34d"
+                              : "#fca5a5",
+                      }}
+                    >
+                      {record.result.toUpperCase()}
+                    </div>
+
                     <div
                       style={{
                         marginTop: 3,
-                        fontSize: 11,
-                        fontFamily: "monospace",
-                        color: "var(--text3)",
+                        fontSize: 10,
+                        color:
+                          "var(--text3)",
                       }}
                     >
-                      {record.passId}
+                      {
+                        record.time
+                      }
                     </div>
-                  )}
-                </div>
-
-                <div style={{ textAlign: "right" }}>
-                  <div
-                    style={{
-                      fontSize: 10,
-                      fontWeight: 700,
-                      letterSpacing: 1,
-                      color:
-                        record.result === "valid"
-                          ? "#86efac"
-                          : record.result === "already"
-                            ? "#fcd34d"
-                            : "#fca5a5",
-                    }}
-                  >
-                    {record.result.toUpperCase()}
-                  </div>
-
-                  <div
-                    style={{
-                      marginTop: 3,
-                      fontSize: 10,
-                      color: "var(--text3)",
-                    }}
-                  >
-                    {record.time}
                   </div>
                 </div>
-              </div>
-            ))}
+              )
+            )}
           </div>
         )}
       </div>
