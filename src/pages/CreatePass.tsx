@@ -13,24 +13,17 @@ import {
 import Icon from "../components/Icon";
 
 interface CreatePassProps {
-  /** Current event prop used by the updated parent. */
   ev?: EventRow | null;
-
-  /** All events, when the parent provides them. */
   events?: EventRow[];
-
-  /** Called when the selected event changes. */
   onSelected?: (event: EventRow) => void;
-
-  /**
-   * Backward-compatible props used by the older parent call:
-   * <CreatePass role={role} event={event} />
-   *
-   * role is intentionally ignored. Creating a pass is not role-gated.
-   */
   role?: string;
   event?: EventRow | null;
 }
+
+type GuestRecord = Guest & {
+  created_by?: string | null;
+  created_by_name?: string | null;
+};
 
 /* Must match the current guests.pass_type constraint */
 const PASS_TYPES = [
@@ -39,6 +32,17 @@ const PASS_TYPES = [
   "Couple",
   "Surge Pass",
 ];
+
+const PASS_PRICES: Record<string, number> = {
+  Regular: 400,
+  "Early Bird": 350,
+  Couple: 700,
+  "Surge Pass": 600,
+};
+
+function getPassPrice(passType: string) {
+  return PASS_PRICES[passType] ?? 0;
+}
 
 const sleep = (ms: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -161,7 +165,7 @@ interface PassArtworkProps {
   bgVersion: number;
 }
 
-export function PassArtwork({
+function PassArtwork({
   guest,
   event,
   qrDataUrl,
@@ -807,19 +811,10 @@ export default function CreatePass({
   ev = null,
   events = [],
   onSelected = () => {},
+  role = "",
   event: legacyEvent = null,
 }: CreatePassProps) {
-  /*
-   * Support both the new props shape and the old parent call.
-   * The role prop is accepted for compatibility but is not used.
-   */
   const initialEvent = ev || legacyEvent;
-  const availableEvents =
-    events.length > 0
-      ? events
-      : initialEvent
-      ? [initialEvent]
-      : [];
   const [selectedEventId, setSelectedEventId] =
     useState(initialEvent?.id || "");
 
@@ -843,17 +838,29 @@ export default function CreatePass({
   const passRef =
     useRef<HTMLDivElement>(null);
 
+  const [isAdmin, setIsAdmin] =
+    useState(role.toLowerCase() === "admin");
+
+  const [submissions, setSubmissions] =
+    useState<GuestRecord[]>([]);
+
+  const [submissionsLoading, setSubmissionsLoading] =
+    useState(true);
+
+  const [deletingId, setDeletingId] =
+    useState<string | null>(null);
+
   const selectedEvent = useMemo(() => {
     return (
-      availableEvents.find(
+      events.find(
         (event) =>
           event.id === selectedEventId
       ) ||
-      initialEvent ||
+      ev ||
       null
     );
   }, [
-    availableEvents,
+    events,
     selectedEventId,
     initialEvent,
   ]);
@@ -864,7 +871,7 @@ export default function CreatePass({
     }
 
     return (
-      availableEvents.find(
+      events.find(
         (event) =>
           event.id ===
           generatedGuest.event_id
@@ -872,7 +879,7 @@ export default function CreatePass({
       selectedEvent
     );
   }, [
-    availableEvents,
+    events,
     generatedGuest,
     selectedEvent,
   ]);
@@ -891,13 +898,216 @@ export default function CreatePass({
   ) => {
     setSelectedEventId(eventId);
 
-    const selected = availableEvents.find(
+    const selected = events.find(
       (event) =>
         event.id === eventId
     );
 
     if (selected) {
       onSelected(selected);
+    }
+  };
+
+  const loadSubmissions = async () => {
+    setSubmissionsLoading(true);
+
+    try {
+      const { data: authData, error: authError } =
+        await supabase.auth.getUser();
+
+      if (authError) {
+        throw new Error(authError.message);
+      }
+
+      const user = authData.user;
+
+      if (!user) {
+        setIsAdmin(false);
+        setSubmissions([]);
+        return;
+      }
+
+      const metadataRole = String(
+        user.user_metadata?.role ||
+          user.app_metadata?.role ||
+          ""
+      ).toLowerCase();
+
+      const admin =
+        role.toLowerCase() === "admin" ||
+        metadataRole === "admin";
+
+      setIsAdmin(admin);
+
+      /*
+       * MEMBER: Submission is a live session list, not a history page.
+       * Do not reload old rows from Supabase and do NOT reset the list
+       * here (a late role change must never wipe passes generated in this
+       * session). Newly generated passes are added locally inside
+       * generatePass(), and deleted passes are removed locally inside
+       * deleteSubmission(). The list already starts as [].
+       */
+      if (!admin) {
+        return;
+      }
+
+      /*
+       * ADMIN: keep the existing full team history from the database.
+       */
+      const { data, error } = await supabase
+        .from("guests")
+        .select("*")
+        .order("created_at", { ascending: false });
+
+      if (error) {
+        throw new Error(error.message);
+      }
+
+      setSubmissions((data || []) as GuestRecord[]);
+    } catch (err) {
+      console.error("SUBMISSIONS LOAD ERROR:", err);
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Could not load submissions."
+      );
+    } finally {
+      setSubmissionsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadSubmissions();
+  }, [role]);
+
+  /*
+   * Only admins need a database realtime subscription here.
+   * Members keep Submission synchronized directly with the generation and
+   * delete actions so a database event cannot wipe their live session list.
+   */
+  useEffect(() => {
+    if (!isAdmin) {
+      return;
+    }
+
+    const channel = supabase
+      .channel(`requests-guests-admin-${role || "admin"}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "guests",
+        },
+        () => {
+          void loadSubmissions();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, [isAdmin, role]);
+
+  const getHeads = (passType: string) =>
+    passType === "Couple" ? 2 : 1;
+
+  const formatCreatedAt = (value?: string | null) => {
+    if (!value) return "—";
+
+    return new Date(value).toLocaleString([], {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    });
+  };
+
+  const getEventForGuest = (guest: GuestRecord) =>
+    events.find((item) => item.id === guest.event_id) ||
+    selectedEvent ||
+    null;
+
+  const downloadSubmissionPdf = async (guest: GuestRecord) => {
+    const eventForPdf = getEventForGuest(guest);
+
+    if (!eventForPdf) {
+      setError("The event for this pass could not be found.");
+      return;
+    }
+
+    try {
+      setError("");
+      const qr = await generateQr(guest.qr_token);
+
+      if (!qr || !qr.startsWith("data:image/")) {
+        throw new Error("QR code generation failed.");
+      }
+
+      setBgVersion(Date.now());
+      setGeneratedGuest(guest);
+      setQrDataUrl(qr);
+
+      await sleep(200);
+      await downloadPdf(guest, qr);
+    } catch (err) {
+      console.error("SUBMISSION DOWNLOAD ERROR:", err);
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Could not download the PDF."
+      );
+    }
+  };
+
+  const deleteSubmission = async (guest: GuestRecord) => {
+    if (!window.confirm(`Delete the pass for ${guest.name}?`)) {
+      return;
+    }
+
+    setDeletingId(guest.id);
+    setError("");
+
+    try {
+      const { error: ledgerDeleteError } = await supabase
+        .from("guest_requests")
+        .delete()
+        .eq("guest_id", guest.id);
+
+      if (ledgerDeleteError) {
+        throw new Error(ledgerDeleteError.message);
+      }
+
+      const { error: deleteError } = await supabase
+        .from("guests")
+        .delete()
+        .eq("id", guest.id);
+
+      if (deleteError) {
+        throw new Error(deleteError.message);
+      }
+
+      setSubmissions((current) =>
+        current.filter((item) => item.id !== guest.id)
+      );
+
+      if (generatedGuest?.id === guest.id) {
+        setGeneratedGuest(null);
+        setQrDataUrl("");
+      }
+
+      setSuccess(`Pass deleted for ${guest.name}.`);
+    } catch (err) {
+      console.error("PASS DELETE ERROR:", err);
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Could not delete the pass."
+      );
+    } finally {
+      setDeletingId(null);
     }
   };
 
@@ -1118,9 +1328,9 @@ export default function CreatePass({
         throw new Error(authError.message);
       }
 
-      const currentUser = authData.user;
+      const user = authData.user;
 
-      if (!currentUser) {
+      if (!user) {
         throw new Error(
           "Please sign in before creating a pass."
         );
@@ -1128,9 +1338,9 @@ export default function CreatePass({
 
       const creatorName =
         String(
-          currentUser.user_metadata?.full_name ||
-            currentUser.user_metadata?.name ||
-            currentUser.email ||
+          user.user_metadata?.full_name ||
+            user.user_metadata?.name ||
+            user.email ||
             "User"
         ).trim() || "User";
 
@@ -1151,23 +1361,16 @@ export default function CreatePass({
         await supabase
           .from("guests")
           .insert({
-            event_id:
-              selectedEvent.id,
+            event_id: selectedEvent.id,
             name: guestName,
             phone: null,
-            pass_type:
-              passType,
-            pass_id:
-              passId,
-            qr_token:
-              token,
-            status:
-              "valid",
+            pass_type: passType,
+            pass_id: passId,
+            qr_token: token,
+            status: "valid",
             notes: null,
-            created_by:
-              currentUser.id,
-            created_by_name:
-              creatorName,
+            created_by: user.id,
+            created_by_name: creatorName,
           } as never)
           .select("*")
           .single();
@@ -1223,6 +1426,17 @@ export default function CreatePass({
       setName("");
 
       /*
+       * Sync the Submission section immediately with the newly generated
+       * pass. Members keep only the passes generated during this session;
+       * admins also get the row instantly while their realtime subscription
+       * keeps the full team list synchronized.
+       */
+      setSubmissions((current) => [
+        guest as GuestRecord,
+        ...current.filter((item) => item.id !== guest.id),
+      ]);
+
+      /*
        * Wait for React to render the new
        * guest + QR before generating PDF.
        */
@@ -1235,6 +1449,42 @@ export default function CreatePass({
         guest,
         qr
       );
+
+      /* --------------------------------------------------------- */
+      /* MONEY / ISSUANCE LEDGER                                  */
+      /* --------------------------------------------------------- */
+
+      const issuedPrice = getPassPrice(guest.pass_type);
+      const pdfPath = `${guest.event_id}/${guest.pass_id}/${guest.pass_id}.pdf`;
+
+      const { error: requestError } = await supabase
+        .from("guest_requests")
+        .insert({
+          event_id: guest.event_id,
+          guest_name: guest.name,
+          phone: null,
+          pass_type: guest.pass_type,
+          notes: null,
+          status: "generated",
+          submitted_by: user.id,
+          guest_id: guest.id,
+          pdf_path: pdfPath,
+          generated_at: new Date().toISOString(),
+          issued_price: issuedPrice,
+          drive_file_id: null,
+        });
+
+      if (requestError) {
+        console.error("Money ledger save failed:", requestError);
+        setError(
+          `Pass was created and downloaded, but the money record could not be saved: ${requestError.message}`
+        );
+        if (isAdmin) {
+          await loadSubmissions();
+        }
+        return;
+      }
+
     } catch (err) {
       const message =
         err instanceof Error
@@ -1377,7 +1627,7 @@ export default function CreatePass({
                 Select event
               </option>
 
-              {availableEvents.map(
+              {events.map(
                 (event) => (
                   <option
                     key={event.id}
@@ -1486,7 +1736,9 @@ export default function CreatePass({
                     key={type}
                     value={type}
                   >
-                    {type}
+                    {type} — ₹{getPassPrice(type)}
+                    {" · "}
+                    {getHeads(type)} {getHeads(type) === 1 ? "Head" : "Heads"}
                   </option>
                 )
               )}
@@ -1793,6 +2045,317 @@ export default function CreatePass({
             </div>
           </div>
         )}
+
+      {/* ===================================================================== */}
+      {/* SUBMISSIONS / ALL TEAM REQUESTS                                     */}
+      {/* ===================================================================== */}
+
+      <div
+        className="card"
+        style={{
+          padding: 24,
+          marginTop: 24,
+        }}
+      >
+        <div
+          style={{
+            marginBottom: 18,
+            display: "flex",
+            alignItems: "flex-end",
+            justifyContent: "space-between",
+            gap: 16,
+            flexWrap: "wrap",
+          }}
+        >
+          <div>
+            <div
+              style={{
+                fontSize: 10,
+                color: "var(--text3)",
+                letterSpacing: 2,
+                textTransform: "uppercase",
+              }}
+            >
+              {isAdmin ? "Team Activity" : "Your Activity"}
+            </div>
+
+            <h2
+              style={{
+                margin: "5px 0 0",
+                fontFamily: "Georgia, 'Times New Roman', serif",
+                fontWeight: 500,
+                fontSize: 28,
+              }}
+            >
+              {isAdmin ? "All Team Requests" : "Submission"}
+            </h2>
+
+            <div
+              style={{
+                marginTop: 6,
+                fontSize: 12,
+                color: "var(--text3)",
+              }}
+            >
+              {isAdmin
+                ? "All generated passes from the team."
+                : "Your generated passes. Download or delete anytime."}
+            </div>
+          </div>
+
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              flexWrap: "wrap",
+              justifyContent: "flex-end",
+            }}
+          >
+            <div
+              style={{
+                padding: "8px 12px",
+                borderRadius: 999,
+                border: "1px solid var(--hair)",
+                color: "var(--text2)",
+                fontSize: 12,
+              }}
+            >
+              {submissions.length} {submissions.length === 1 ? "Pass" : "Passes"}
+            </div>
+
+            {isAdmin && (
+              <div
+                style={{
+                  padding: "8px 12px",
+                  borderRadius: 999,
+                  border: "1px solid rgba(242,205,123,.22)",
+                  color: "#f2d27f",
+                  fontSize: 12,
+                }}
+              >
+                ₹{submissions.reduce((sum, item) => sum + getPassPrice(item.pass_type), 0)} Collected
+              </div>
+            )}
+          </div>
+        </div>
+
+        {submissionsLoading ? (
+          <div
+            style={{
+              padding: "42px 16px",
+              textAlign: "center",
+              color: "var(--text3)",
+              fontSize: 13,
+            }}
+          >
+            Loading passes…
+          </div>
+        ) : !submissions.length ? (
+          <div
+            style={{
+              padding: "42px 16px",
+              textAlign: "center",
+              border: "1px dashed var(--hair)",
+              borderRadius: 14,
+              color: "var(--text3)",
+              fontSize: 13,
+            }}
+          >
+            {isAdmin
+              ? "No passes have been generated for this event yet."
+              : "You have not generated any passes yet."}
+          </div>
+        ) : (
+          <div style={{ overflowX: "auto" }}>
+            <table
+              style={{
+                width: "100%",
+                minWidth: isAdmin ? 920 : 720,
+                borderCollapse: "collapse",
+                textAlign: "left",
+              }}
+            >
+              <thead>
+                <tr>
+                  {[
+                    "Guest",
+                    ...(isAdmin ? ["Event", "Generated By"] : ["Event"]),
+                    "Pass Type",
+                    ...(isAdmin ? ["Price"] : []),
+                    "Heads",
+                    "Created",
+                    "Actions",
+                  ].map((heading) => (
+                    <th
+                      key={heading}
+                      style={{
+                        padding: "11px 12px",
+                        borderBottom: "1px solid var(--hair)",
+                        color: "var(--text3)",
+                        fontSize: 9,
+                        letterSpacing: 1.5,
+                        textTransform: "uppercase",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {heading}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+
+              <tbody>
+                {submissions.map((guest) => (
+                  <tr key={guest.id}>
+                    <td
+                      style={{
+                        padding: "15px 12px",
+                        borderBottom: "1px solid var(--hair)",
+                      }}
+                    >
+                      <div
+                        style={{
+                          fontWeight: 700,
+                          color: "var(--text)",
+                          fontSize: 13,
+                        }}
+                      >
+                        {guest.name}
+                      </div>
+                      <div
+                        style={{
+                          marginTop: 4,
+                          color: "var(--text3)",
+                          fontSize: 11,
+                        }}
+                      >
+                        {guest.pass_id}
+                      </div>
+                    </td>
+
+                    <td
+                      style={{
+                        padding: "15px 12px",
+                        borderBottom: "1px solid var(--hair)",
+                        color: "var(--text2)",
+                        fontSize: 12,
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {getEventForGuest(guest)?.name || "Unknown event"}
+                    </td>
+
+                    {isAdmin && (
+                      <td
+                        style={{
+                          padding: "15px 12px",
+                          borderBottom: "1px solid var(--hair)",
+                          color: "var(--text2)",
+                          fontSize: 12,
+                        }}
+                      >
+                        {guest.created_by_name || "Unknown member"}
+                      </td>
+                    )}
+
+                    <td
+                      style={{
+                        padding: "15px 12px",
+                        borderBottom: "1px solid var(--hair)",
+                        color: "var(--text2)",
+                        fontSize: 12,
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {guest.pass_type}
+                    </td>
+
+                    {isAdmin && (
+                      <td
+                        style={{
+                          padding: "15px 12px",
+                          borderBottom: "1px solid var(--hair)",
+                          color: "var(--text)",
+                          fontSize: 12,
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        ₹{getPassPrice(guest.pass_type)}
+                      </td>
+                    )}
+
+                    <td
+                      style={{
+                        padding: "15px 12px",
+                        borderBottom: "1px solid var(--hair)",
+                        color: "var(--text)",
+                        fontSize: 12,
+                      }}
+                    >
+                      {getHeads(guest.pass_type)}
+                    </td>
+
+                    <td
+                      style={{
+                        padding: "15px 12px",
+                        borderBottom: "1px solid var(--hair)",
+                        color: "var(--text3)",
+                        fontSize: 11,
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {formatCreatedAt(guest.created_at)}
+                    </td>
+
+                    <td
+                      style={{
+                        padding: "15px 12px",
+                        borderBottom: "1px solid var(--hair)",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 8,
+                        }}
+                      >
+                        <button
+                          className="btn"
+                          onClick={() => downloadSubmissionPdf(guest)}
+                          disabled={deletingId === guest.id}
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 7,
+                          }}
+                        >
+                          <Icon name="download" size={14} />
+                          Download PDF
+                        </button>
+
+                        <button
+                          className="btn"
+                          onClick={() => deleteSubmission(guest)}
+                          disabled={deletingId === guest.id}
+                          style={{
+                            color: "#ff8f8f",
+                            borderColor: "rgba(255,100,100,.22)",
+                          }}
+                        >
+                          {deletingId === guest.id ? "Deleting…" : "Delete"}
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
 
       {/* HIDDEN FULL-SIZE PASS USED FOR PDF */}
 

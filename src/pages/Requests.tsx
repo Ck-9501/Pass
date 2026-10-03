@@ -1,40 +1,31 @@
-import {
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
-
+import { useEffect, useMemo, useRef, useState } from "react";
 import html2canvas from "html2canvas";
 import { jsPDF } from "jspdf";
-import QRCode from "qrcode";
 
-import {
-  supabase,
-} from "../lib/supabase";
-
-import type {
-  EventRow,
-  Guest,
-} from "../lib/supabase";
-
+import { supabase } from "../lib/supabase";
+import type { EventRow, Guest } from "../lib/supabase";
 import {
   PASS_BACKGROUND_URL,
   generateQr,
   newPassId,
   newToken,
 } from "../lib/pass";
-
 import Icon from "../components/Icon";
 
 interface CreatePassProps {
-  ev: EventRow | null;
-  events: EventRow[];
-  onSelected: (
-    event: EventRow
-  ) => void;
+  ev?: EventRow | null;
+  events?: EventRow[];
+  onSelected?: (event: EventRow) => void;
+  role?: string;
+  event?: EventRow | null;
 }
 
+type GuestRecord = Guest & {
+  created_by?: string | null;
+  created_by_name?: string | null;
+};
+
+/* Must match the current guests.pass_type constraint */
 const PASS_TYPES = [
   "Regular",
   "Early Bird",
@@ -42,64 +33,27 @@ const PASS_TYPES = [
   "Surge Pass",
 ];
 
-const PASS_PRICES: Record<
-  string,
-  number
-> = {
+const PASS_PRICES: Record<string, number> = {
   Regular: 400,
   "Early Bird": 350,
   Couple: 700,
   "Surge Pass": 600,
 };
 
-const sleep = (
-  ms: number
-) =>
-  new Promise<void>(
-    (resolve) =>
-      setTimeout(
-        resolve,
-        ms
-      )
-  );
-
-function getPassPrice(
-  passType: string
-) {
-  return (
-    PASS_PRICES[
-      passType
-    ] ?? 0
-  );
+function getPassPrice(passType: string) {
+  return PASS_PRICES[passType] ?? 0;
 }
 
-function getHeadCount(
-  passType: string
-) {
-  return passType ===
-    "Couple"
-    ? 2
-    : 1;
-}
+const sleep = (ms: number) =>
+  new Promise<void>((resolve) => setTimeout(resolve, ms));
 
-/* ========================================================= */
-/* WAIT FOR PASS                                              */
-/* ========================================================= */
-
-export async function waitForPass(
+/* Wait until the hidden pass has rendered for this guest */
+async function waitForPass(
   el: HTMLElement,
   passId: string
 ) {
-  for (
-    let i = 0;
-    i < 60;
-    i++
-  ) {
-    if (
-      el.textContent?.includes(
-        passId
-      )
-    ) {
+  for (let i = 0; i < 60; i++) {
+    if (el.textContent?.includes(passId)) {
       return true;
     }
 
@@ -109,19 +63,11 @@ export async function waitForPass(
   return false;
 }
 
-/* ========================================================= */
-/* WAIT FOR IMAGES                                            */
-/* ========================================================= */
-
-export async function waitForImages(
-  el: HTMLElement
-) {
-  const imgs =
-    Array.from(
-      el.querySelectorAll(
-        "img"
-      )
-    );
+/* Wait until every image inside the pass has loaded */
+async function waitForImages(el: HTMLElement) {
+  const imgs = Array.from(
+    el.querySelectorAll("img")
+  );
 
   await Promise.all(
     imgs.map((img) => {
@@ -132,56 +78,33 @@ export async function waitForImages(
         return Promise.resolve();
       }
 
-      return new Promise<void>(
-        (resolve) => {
-          img.addEventListener(
-            "load",
-            () =>
-              resolve(),
-            {
-              once: true,
-            }
-          );
+      return new Promise<void>((resolve) => {
+        img.addEventListener(
+          "load",
+          () => resolve(),
+          { once: true }
+        );
 
-          img.addEventListener(
-            "error",
-            () =>
-              resolve(),
-            {
-              once: true,
-            }
-          );
-        }
-      );
+        img.addEventListener(
+          "error",
+          () => resolve(),
+          { once: true }
+        );
+      });
     })
   );
 }
 
-/* ========================================================= */
-/* FORMATTERS                                                 */
-/* ========================================================= */
+function formatDate(date: string | null) {
+  if (!date) return "TBA";
 
-function formatDate(
-  date: string | null
-) {
-  if (!date) {
-    return "TBA";
-  }
+  const parts = date.split("-");
 
-  const parts =
-    date.split("-");
-
-  if (
-    parts.length !== 3
-  ) {
+  if (parts.length !== 3) {
     return date;
   }
 
-  const [
-    year,
-    month,
-    day,
-  ] = parts;
+  const [year, month, day] = parts;
 
   const months = [
     "JAN",
@@ -199,59 +122,36 @@ function formatDate(
   ];
 
   const monthName =
-    months[
-      Number(month) - 1
-    ] || month;
+    months[Number(month) - 1] || month;
 
   return `${day} ${monthName} ${year}`;
 }
 
-function formatTime(
-  time: string | null
-) {
-  if (!time) {
-    return "TBA";
-  }
+function formatTime(time: string | null) {
+  if (!time) return "TBA";
 
-  const parts =
-    time.split(":");
+  const parts = time.split(":");
 
-  if (
-    parts.length < 2
-  ) {
+  if (parts.length < 2) {
     return time;
   }
 
-  let hour =
-    Number(parts[0]);
+  let hour = Number(parts[0]);
+  const minute = parts[1];
 
-  const minute =
-    parts[1];
-
-  if (
-    Number.isNaN(hour)
-  ) {
+  if (Number.isNaN(hour)) {
     return time;
   }
 
-  const suffix =
-    hour >= 12
-      ? "PM"
-      : "AM";
+  const suffix = hour >= 12 ? "PM" : "AM";
 
-  hour =
-    hour % 12 || 12;
+  hour = hour % 12 || 12;
 
   return `${hour}:${minute} ${suffix}`;
 }
 
-function venueText(
-  venue: string | null
-) {
-  return (
-    venue?.trim() ||
-    "VENUE TBA"
-  );
+function venueText(venue: string | null) {
+  return venue?.trim() || "VENUE TBA";
 }
 
 /* ========================================================================= */
@@ -265,7 +165,7 @@ interface PassArtworkProps {
   bgVersion: number;
 }
 
-export function PassArtwork({
+function PassArtwork({
   guest,
   event,
   qrDataUrl,
@@ -286,7 +186,6 @@ export function PassArtwork({
       }}
     >
       {/* BACKGROUND */}
-
       <img
         src={`${PASS_BACKGROUND_URL}?v=${bgVersion}`}
         alt=""
@@ -297,15 +196,13 @@ export function PassArtwork({
           width: "100%",
           height: "100%",
           objectFit: "cover",
-          objectPosition:
-            "center",
+          objectPosition: "center",
           display: "block",
           zIndex: 0,
         }}
       />
 
       {/* CINEMATIC OVERLAY */}
-
       <div
         style={{
           position: "absolute",
@@ -313,13 +210,11 @@ export function PassArtwork({
           zIndex: 1,
           background:
             "linear-gradient(180deg, rgba(1,5,15,.73) 0%, rgba(2,7,15,.20) 28%, rgba(0,0,0,.08) 52%, rgba(1,5,12,.30) 68%, rgba(0,2,8,.78) 100%)",
-          pointerEvents:
-            "none",
+          pointerEvents: "none",
         }}
       />
 
       {/* CENTER GLOW */}
-
       <div
         style={{
           position: "absolute",
@@ -327,13 +222,11 @@ export function PassArtwork({
           zIndex: 1,
           background:
             "radial-gradient(circle at 50% 48%, rgba(255,220,145,.10) 0%, rgba(255,220,145,0) 42%)",
-          pointerEvents:
-            "none",
+          pointerEvents: "none",
         }}
       />
 
       {/* GOLD BORDER */}
-
       <div
         style={{
           position: "absolute",
@@ -344,13 +237,11 @@ export function PassArtwork({
           borderRadius: 28,
           boxShadow:
             "0 0 20px rgba(241,203,117,.18), inset 0 0 35px rgba(0,0,0,.14)",
-          pointerEvents:
-            "none",
+          pointerEvents: "none",
         }}
       />
 
       {/* INNER BORDER */}
-
       <div
         style={{
           position: "absolute",
@@ -359,13 +250,11 @@ export function PassArtwork({
           border:
             "1px solid rgba(255,244,210,.22)",
           borderRadius: 21,
-          pointerEvents:
-            "none",
+          pointerEvents: "none",
         }}
       />
 
       {/* TOP BRAND */}
-
       <div
         style={{
           position: "absolute",
@@ -374,10 +263,8 @@ export function PassArtwork({
           right: 70,
           zIndex: 4,
           display: "flex",
-          justifyContent:
-            "space-between",
-          alignItems:
-            "center",
+          justifyContent: "space-between",
+          alignItems: "center",
         }}
       >
         <div
@@ -395,8 +282,7 @@ export function PassArtwork({
 
         <div
           style={{
-            padding:
-              "10px 18px",
+            padding: "10px 18px",
             borderRadius: 25,
             border:
               "1px solid rgba(245,213,135,.78)",
@@ -412,7 +298,6 @@ export function PassArtwork({
       </div>
 
       {/* VYRA */}
-
       <div
         style={{
           position: "absolute",
@@ -456,8 +341,7 @@ export function PassArtwork({
           style={{
             width: 255,
             height: 1,
-            margin:
-              "15px auto 11px",
+            margin: "15px auto 11px",
             background:
               "linear-gradient(90deg, transparent, #f1cf7b, transparent)",
           }}
@@ -475,7 +359,6 @@ export function PassArtwork({
       </div>
 
       {/* EVENT TITLE */}
-
       <div
         style={{
           position: "absolute",
@@ -507,24 +390,20 @@ export function PassArtwork({
             lineHeight: 1,
             letterSpacing: 1,
             color: "#fff9ec",
-            textTransform:
-              "uppercase",
+            textTransform: "uppercase",
             textShadow:
               "0 4px 17px rgba(0,0,0,.72), 0 0 10px rgba(255,226,170,.10)",
           }}
         >
-          {event.name ||
-            "EVENT"}
+          {event.name || "EVENT"}
         </div>
 
         <div
           style={{
-            margin:
-              "17px auto 0",
+            margin: "17px auto 0",
             width: 72,
             height: 2,
-            background:
-              "#f3cf78",
+            background: "#f3cf78",
             boxShadow:
               "0 0 12px rgba(243,207,120,.50)",
           }}
@@ -532,7 +411,6 @@ export function PassArtwork({
       </div>
 
       {/* GUEST */}
-
       <div
         style={{
           position: "absolute",
@@ -540,8 +418,7 @@ export function PassArtwork({
           left: 82,
           right: 82,
           zIndex: 4,
-          padding:
-            "17px 20px 21px",
+          padding: "17px 20px 21px",
           textAlign: "center",
           borderTop:
             "1px solid rgba(241,203,117,.60)",
@@ -579,7 +456,6 @@ export function PassArtwork({
       </div>
 
       {/* EVENT INFO */}
-
       <div
         style={{
           position: "absolute",
@@ -598,23 +474,18 @@ export function PassArtwork({
             "rgba(2,7,14,.65)",
           boxShadow:
             "0 15px 32px rgba(0,0,0,.25)",
-          backdropFilter:
-            "blur(4px)",
+          backdropFilter: "blur(4px)",
         }}
       >
         {/* DATE */}
-
         <div
           style={{
             minHeight: 150,
             padding: 20,
             display: "flex",
-            flexDirection:
-              "column",
-            justifyContent:
-              "center",
-            alignItems:
-              "center",
+            flexDirection: "column",
+            justifyContent: "center",
+            alignItems: "center",
             textAlign: "center",
             borderRight:
               "1px solid rgba(242,205,123,.32)",
@@ -626,10 +497,7 @@ export function PassArtwork({
               marginBottom: 9,
             }}
           >
-            <Icon
-              name="calendar"
-              size={22}
-            />
+            <Icon name="calendar" size={22} />
           </div>
 
           <div
@@ -652,25 +520,19 @@ export function PassArtwork({
               color: "#ffffff",
             }}
           >
-            {formatDate(
-              event.date
-            )}
+            {formatDate(event.date)}
           </div>
         </div>
 
         {/* VENUE */}
-
         <div
           style={{
             minHeight: 150,
             padding: 20,
             display: "flex",
-            flexDirection:
-              "column",
-            justifyContent:
-              "center",
-            alignItems:
-              "center",
+            flexDirection: "column",
+            justifyContent: "center",
+            alignItems: "center",
             textAlign: "center",
             borderRight:
               "1px solid rgba(242,205,123,.32)",
@@ -682,10 +544,7 @@ export function PassArtwork({
               marginBottom: 9,
             }}
           >
-            <Icon
-              name="pin"
-              size={22}
-            />
+            <Icon name="pin" size={22} />
           </div>
 
           <div
@@ -709,25 +568,19 @@ export function PassArtwork({
               color: "#ffffff",
             }}
           >
-            {venueText(
-              event.venue
-            )}
+            {venueText(event.venue)}
           </div>
         </div>
 
         {/* TIME */}
-
         <div
           style={{
             minHeight: 150,
             padding: 20,
             display: "flex",
-            flexDirection:
-              "column",
-            justifyContent:
-              "center",
-            alignItems:
-              "center",
+            flexDirection: "column",
+            justifyContent: "center",
+            alignItems: "center",
             textAlign: "center",
           }}
         >
@@ -737,10 +590,7 @@ export function PassArtwork({
               marginBottom: 9,
             }}
           >
-            <Icon
-              name="clock"
-              size={22}
-            />
+            <Icon name="clock" size={22} />
           </div>
 
           <div
@@ -762,15 +612,12 @@ export function PassArtwork({
               color: "#ffffff",
             }}
           >
-            {formatTime(
-              event.time
-            )}
+            {formatTime(event.time)}
           </div>
         </div>
       </div>
 
       {/* QR CODE */}
-
       <div
         style={{
           position: "absolute",
@@ -783,17 +630,14 @@ export function PassArtwork({
       >
         <div
           style={{
-            boxSizing:
-              "content-box",
+            boxSizing: "content-box",
             display: "block",
             width: 220,
             height: 220,
             padding: 14,
-            margin:
-              "0 auto",
+            margin: "0 auto",
             borderRadius: 19,
-            background:
-              "#ffffff",
+            background: "#ffffff",
             border:
               "2px solid rgba(242,205,123,.95)",
             boxShadow:
@@ -817,12 +661,9 @@ export function PassArtwork({
                 width: 220,
                 height: 220,
                 display: "flex",
-                alignItems:
-                  "center",
-                justifyContent:
-                  "center",
-                color:
-                  "#111111",
+                alignItems: "center",
+                justifyContent: "center",
+                color: "#111111",
                 fontSize: 14,
               }}
             >
@@ -846,7 +687,6 @@ export function PassArtwork({
       </div>
 
       {/* PASS ID */}
-
       <div
         style={{
           position: "absolute",
@@ -859,11 +699,9 @@ export function PassArtwork({
       >
         <div
           style={{
-            display:
-              "inline-block",
+            display: "inline-block",
             minWidth: 320,
-            padding:
-              "13px 30px 15px",
+            padding: "13px 30px 15px",
             borderRadius: 17,
             border:
               "1px solid rgba(242,205,123,.78)",
@@ -884,7 +722,6 @@ export function PassArtwork({
           </div>
 
           <div
-            data-pass-id
             style={{
               marginTop: 6,
               fontFamily:
@@ -900,7 +737,6 @@ export function PassArtwork({
       </div>
 
       {/* FOOTER */}
-
       <div
         style={{
           position: "absolute",
@@ -914,10 +750,8 @@ export function PassArtwork({
         <div
           style={{
             display: "flex",
-            alignItems:
-              "center",
-            justifyContent:
-              "center",
+            alignItems: "center",
+            justifyContent: "center",
             gap: 16,
           }}
         >
@@ -970,573 +804,731 @@ export function PassArtwork({
 }
 
 /* ========================================================================= */
-/* CREATE PASS                                                             */
+/* CREATE PASS PAGE                                                         */
 /* ========================================================================= */
 
 export default function CreatePass({
-  ev,
-  events,
-  onSelected,
+  ev = null,
+  events = [],
+  onSelected = () => {},
+  role = "",
+  event: legacyEvent = null,
 }: CreatePassProps) {
-  const [
-    selectedEventId,
-    setSelectedEventId,
-  ] = useState(
-    ev?.id || ""
-  );
+  const initialEvent = ev || legacyEvent;
+  const [selectedEventId, setSelectedEventId] =
+    useState(initialEvent?.id || "");
 
-  const [name, setName] =
+  const [name, setName] = useState("");
+  const [passType, setPassType] =
+    useState("Regular");
+
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+
+  const [generatedGuest, setGeneratedGuest] =
+    useState<Guest | null>(null);
+
+  const [qrDataUrl, setQrDataUrl] =
     useState("");
 
-  const [
-    passType,
-    setPassType,
-  ] = useState("Regular");
-
-  const [
-    loading,
-    setLoading,
-  ] = useState(false);
-
-  const [error, setError] =
-    useState("");
-
-  const [
-    success,
-    setSuccess,
-  ] = useState("");
-
-  const [
-    generatedGuest,
-    setGeneratedGuest,
-  ] =
-    useState<Guest | null>(
-      null
-    );
-
-  const [
-    qrDataUrl,
-    setQrDataUrl,
-  ] = useState("");
-
-  const [
-    bgVersion,
-    setBgVersion,
-  ] = useState(
-    () => Date.now()
-  );
+  const [bgVersion, setBgVersion] =
+    useState(() => Date.now());
 
   const passRef =
-    useRef<HTMLDivElement>(
+    useRef<HTMLDivElement>(null);
+
+  const [isAdmin, setIsAdmin] =
+    useState(role.toLowerCase() === "admin");
+
+  const [submissions, setSubmissions] =
+    useState<GuestRecord[]>([]);
+
+  const [submissionsLoading, setSubmissionsLoading] =
+    useState(true);
+
+  const [deletingId, setDeletingId] =
+    useState<string | null>(null);
+
+  const selectedEvent = useMemo(() => {
+    return (
+      events.find(
+        (event) =>
+          event.id === selectedEventId
+      ) ||
+      ev ||
       null
     );
+  }, [
+    events,
+    selectedEventId,
+    initialEvent,
+  ]);
 
-  const selectedEvent =
-    useMemo(() => {
-      return (
-        events.find(
-          (event) =>
-            event.id ===
-            selectedEventId
-        ) ||
-        ev ||
-        null
-      );
-    }, [
-      events,
-      selectedEventId,
-      ev,
-    ]);
+  const passEvent = useMemo(() => {
+    if (!generatedGuest) {
+      return selectedEvent;
+    }
 
-  const passEvent =
-    useMemo(() => {
-      if (!generatedGuest) {
-        return selectedEvent;
-      }
-
-      return (
-        events.find(
-          (event) =>
-            event.id ===
-            generatedGuest.event_id
-        ) ||
-        selectedEvent
-      );
-    }, [
-      events,
-      generatedGuest,
-      selectedEvent,
-    ]);
+    return (
+      events.find(
+        (event) =>
+          event.id ===
+          generatedGuest.event_id
+      ) ||
+      selectedEvent
+    );
+  }, [
+    events,
+    generatedGuest,
+    selectedEvent,
+  ]);
 
   useEffect(() => {
-    if (
-      !selectedEventId &&
-      ev?.id
-    ) {
-      setSelectedEventId(
-        ev.id
-      );
+    if (!selectedEventId && initialEvent?.id) {
+      setSelectedEventId(initialEvent.id);
     }
   }, [
-    ev,
+    initialEvent,
     selectedEventId,
   ]);
 
   const handleEventChange = (
     eventId: string
   ) => {
-    setSelectedEventId(
-      eventId
+    setSelectedEventId(eventId);
+
+    const selected = events.find(
+      (event) =>
+        event.id === eventId
     );
 
-    const selected =
-      events.find(
-        (event) =>
-          event.id ===
-          eventId
-      );
-
     if (selected) {
-      onSelected(
-        selected
+      onSelected(selected);
+    }
+  };
+
+  const loadSubmissions = async () => {
+    setSubmissionsLoading(true);
+
+    try {
+      const { data: authData, error: authError } =
+        await supabase.auth.getUser();
+
+      if (authError) {
+        throw new Error(authError.message);
+      }
+
+      const user = authData.user;
+
+      if (!user) {
+        setSubmissions([]);
+        setSubmissionsLoading(false);
+        return;
+      }
+
+      const metadataRole = String(
+        user.user_metadata?.role ||
+          user.app_metadata?.role ||
+          ""
+      ).toLowerCase();
+
+      const admin =
+        role.toLowerCase() === "admin" ||
+        metadataRole === "admin";
+
+      setIsAdmin(admin);
+
+      /*
+       * Members use session-only Submission state.
+       * Never hydrate their Submission section from
+       * old database history.
+       *
+       * Admin uses the database as the source of truth
+       * for All Team Requests.
+       */
+      if (!admin) {
+        setSubmissions([]);
+        setSubmissionsLoading(false);
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from("guests")
+        .select("*")
+        .order("created_at", { ascending: false });
+
+      if (error) {
+        throw new Error(error.message);
+      }
+
+      setSubmissions((data || []) as GuestRecord[]);
+    } catch (err) {
+      console.error("SUBMISSIONS LOAD ERROR:", err);
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Could not load submissions."
+      );
+    } finally {
+      setSubmissionsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    let channel: ReturnType<typeof supabase.channel> | null = null;
+
+    const setupSubmissions = async () => {
+      const { data: authData } = await supabase.auth.getUser();
+      const user = authData.user;
+
+      if (cancelled) return;
+
+      const metadataRole = String(
+        user?.user_metadata?.role ||
+          user?.app_metadata?.role ||
+          ""
+      ).toLowerCase();
+
+      const admin =
+        role.toLowerCase() === "admin" ||
+        metadataRole === "admin";
+
+      setIsAdmin(admin);
+
+      if (!admin) {
+        /* Session-only list: do not fetch old passes. */
+        setSubmissions([]);
+        setSubmissionsLoading(false);
+        return;
+      }
+
+      await loadSubmissions();
+
+      if (cancelled) return;
+
+      channel = supabase
+        .channel(`requests-guests-admin-${role || "admin"}`)
+        .on(
+          "postgres_changes",
+          {
+            event: "*",
+            schema: "public",
+            table: "guests",
+          },
+          () => {
+            void loadSubmissions();
+          }
+        )
+        .subscribe();
+    };
+
+    void setupSubmissions();
+
+    return () => {
+      cancelled = true;
+      if (channel) {
+        void supabase.removeChannel(channel);
+      }
+    };
+  }, [role]);
+
+  const getHeads = (passType: string) =>
+    passType === "Couple" ? 2 : 1;
+
+  const formatCreatedAt = (value?: string | null) => {
+    if (!value) return "—";
+
+    return new Date(value).toLocaleString([], {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    });
+  };
+
+  const getEventForGuest = (guest: GuestRecord) =>
+    events.find((item) => item.id === guest.event_id) ||
+    selectedEvent ||
+    null;
+
+  const downloadSubmissionPdf = async (guest: GuestRecord) => {
+    const eventForPdf = getEventForGuest(guest);
+
+    if (!eventForPdf) {
+      setError("The event for this pass could not be found.");
+      return;
+    }
+
+    try {
+      setError("");
+      const qr = await generateQr(guest.qr_token);
+
+      if (!qr || !qr.startsWith("data:image/")) {
+        throw new Error("QR code generation failed.");
+      }
+
+      setBgVersion(Date.now());
+      setGeneratedGuest(guest);
+      setQrDataUrl(qr);
+
+      await sleep(200);
+      await downloadPdf(guest, qr);
+    } catch (err) {
+      console.error("SUBMISSION DOWNLOAD ERROR:", err);
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Could not download the PDF."
       );
     }
   };
 
-  /* ========================================================= */
-  /* CREATE PDF                                                 */
-  /* ========================================================= */
+  const deleteSubmission = async (guest: GuestRecord) => {
+    if (!window.confirm(`Delete the pass for ${guest.name}?`)) {
+      return;
+    }
 
-  const createPdf = async (
-    guest: Guest,
-    qr: string,
-    eventForPdf: EventRow
+    setDeletingId(guest.id);
+    setError("");
+
+    try {
+      const { error: ledgerDeleteError } = await supabase
+        .from("guest_requests")
+        .delete()
+        .eq("guest_id", guest.id);
+
+      if (ledgerDeleteError) {
+        throw new Error(ledgerDeleteError.message);
+      }
+
+      const { error: deleteError } = await supabase
+        .from("guests")
+        .delete()
+        .eq("id", guest.id);
+
+      if (deleteError) {
+        throw new Error(deleteError.message);
+      }
+
+      setSubmissions((current) =>
+        current.filter((item) => item.id !== guest.id)
+      );
+
+      if (generatedGuest?.id === guest.id) {
+        setGeneratedGuest(null);
+        setQrDataUrl("");
+      }
+
+      setSuccess(`Pass deleted for ${guest.name}.`);
+    } catch (err) {
+      console.error("PASS DELETE ERROR:", err);
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Could not delete the pass."
+      );
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  /* --------------------------------------------------------------------- */
+  /* DOWNLOAD PDF                                                         */
+  /* --------------------------------------------------------------------- */
+
+  const downloadPdf = async (
+    guest: Guest | null = generatedGuest,
+    qr: string = qrDataUrl
   ) => {
+    if (!guest) {
+      setError(
+        "No pass is available to download."
+      );
+      return;
+    }
+
+    if (!qr) {
+      setError(
+        "QR code was not generated."
+      );
+      return;
+    }
+
+    /*
+     * Give React time to render the newly-created
+     * guest and QR into the hidden full-size pass.
+     */
     for (
       let i = 0;
-      i < 60 &&
-      !passRef.current;
+      i < 60 && !passRef.current;
       i++
     ) {
       await sleep(50);
     }
 
-    const element =
-      passRef.current;
+    const element = passRef.current;
 
     if (!element) {
-      throw new Error(
+      setError(
         "Pass preview could not be prepared."
       );
+      return;
     }
 
-    const rendered =
-      await waitForPass(
-        element,
-        guest.pass_id
-      );
+    try {
+      const rendered =
+        await waitForPass(
+          element,
+          guest.pass_id
+        );
 
-    if (!rendered) {
-      throw new Error(
-        "Pass did not finish rendering."
-      );
-    }
+      if (!rendered) {
+        throw new Error(
+          "Pass did not finish rendering."
+        );
+      }
 
-    const qrImage =
-      element.querySelector(
-        'img[data-pass-qr="1"]'
-      ) as HTMLImageElement | null;
+      /*
+       * Make sure the QR image exists.
+       */
+      const qrImage =
+        element.querySelector(
+          'img[data-pass-qr="1"]'
+        ) as HTMLImageElement | null;
 
-    if (!qrImage) {
-      throw new Error(
-        "QR image was not found."
-      );
-    }
+      if (!qrImage) {
+        throw new Error(
+          "QR image was not found in the pass."
+        );
+      }
 
-    await waitForImages(
-      element
-    );
+      /*
+       * Wait until the QR image is actually loaded.
+       */
+      await waitForImages(element);
 
-    if (
-      !qrImage.complete ||
-      qrImage.naturalWidth ===
-        0
-    ) {
-      throw new Error(
-        "QR image failed to load."
-      );
-    }
+      if (
+        !qrImage.complete ||
+        qrImage.naturalWidth === 0
+      ) {
+        throw new Error(
+          "QR image failed to load."
+        );
+      }
 
-    await sleep(200);
+      /*
+       * Small rendering delay.
+       */
+      await sleep(300);
 
-    const canvas =
-      await html2canvas(
-        element,
-        {
-          width: 1024,
-          height: 1536,
-          scale: 2,
-          useCORS: true,
-          allowTaint: false,
-          backgroundColor:
-            "#050810",
-          logging: false,
-        }
-      );
-
-    const image =
-      canvas.toDataURL(
-        "image/jpeg",
-        0.96
-      );
-
-    const pdf =
-      new jsPDF({
-        orientation:
-          "portrait",
-        unit: "pt",
-        format: [
-          288,
-          432,
-        ],
-        compress: true,
-      });
-
-    pdf.addImage(
-      image,
-      "JPEG",
-      0,
-      0,
-      288,
-      432,
-      undefined,
-      "FAST"
-    );
-
-    const pdfBlob =
-      pdf.output("blob");
-
-    const storagePath =
-      `${guest.event_id}/${guest.pass_id}/${guest.pass_id}.pdf`;
-
-    const {
-      error:
-        storageError,
-    } =
-      await supabase.storage
-        .from("passes")
-        .upload(
-          storagePath,
-          pdfBlob,
+      /*
+       * IMPORTANT:
+       *
+       * We DO NOT hide the QR anymore.
+       *
+       * The QR that you see in the pass is now
+       * directly captured into the PDF canvas.
+       */
+      const canvas =
+        await html2canvas(
+          element,
           {
-            contentType:
-              "application/pdf",
-            upsert: true,
+            width: 1024,
+            height: 1536,
+            scale: 2,
+            useCORS: true,
+            allowTaint: false,
+            backgroundColor:
+              "#050810",
+            logging: false,
           }
         );
 
-    if (
-      storageError
-    ) {
-      throw new Error(
-        `PDF storage failed: ${storageError.message}`
+      /*
+       * Convert the complete pass artwork
+       * including the real QR into an image.
+       */
+      const image =
+        canvas.toDataURL(
+          "image/jpeg",
+          0.96
+        );
+
+      /*
+       * Create 2:3 portrait PDF.
+       */
+      const pdf = new jsPDF({
+        orientation: "portrait",
+        unit: "pt",
+        format: [288, 432],
+        compress: true,
+      });
+
+      /*
+       * The QR is ALREADY inside this image.
+       *
+       * No second QR insertion.
+       * No hidden QR.
+       * No coordinate guessing.
+       */
+      pdf.addImage(
+        image,
+        "JPEG",
+        0,
+        0,
+        288,
+        432,
+        undefined,
+        "FAST"
+      );
+
+      const safeName =
+        guest.name
+          .replace(
+            /[^a-z0-9]+/gi,
+            "-"
+          )
+          .replace(
+            /^-|-$/g,
+            ""
+          );
+
+      pdf.save(
+        `${guest.pass_id}-${safeName}.pdf`
+      );
+
+      setSuccess(
+        `PDF downloaded for ${guest.name}.`
+      );
+    } catch (err) {
+      console.error(
+        "PDF generation error:",
+        err
+      );
+
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Could not create the PDF."
       );
     }
-
-    return {
-      pdf,
-      pdfBlob,
-      storagePath,
-      eventForPdf,
-    };
   };
 
-  /* ========================================================= */
-  /* GENERATE PASS                                             */
-  /* ========================================================= */
+  /* --------------------------------------------------------------------- */
+  /* GENERATE PASS                                                         */
+  /* --------------------------------------------------------------------- */
 
-  const generatePass =
-    async () => {
-      setError("");
-      setSuccess("");
+  const generatePass = async () => {
+    setError("");
+    setSuccess("");
 
-      const guestName =
-        name.trim();
+    const guestName =
+      name.trim();
 
-      if (!guestName) {
-        setError(
-          "Enter the guest name."
-        );
-        return;
+    if (!guestName) {
+      setError(
+        "Enter the guest name."
+      );
+      return;
+    }
+
+    if (!selectedEvent) {
+      setError(
+        "Select an event."
+      );
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      const { data: authData, error: authError } =
+        await supabase.auth.getUser();
+
+      if (authError) {
+        throw new Error(authError.message);
       }
 
-      if (!selectedEvent) {
-        setError(
-          "Select an event."
+      const user = authData.user;
+
+      if (!user) {
+        throw new Error(
+          "Please sign in before creating a pass."
         );
-        return;
       }
 
-      setLoading(true);
+      const creatorName =
+        String(
+          user.user_metadata?.full_name ||
+            user.user_metadata?.name ||
+            user.email ||
+            "User"
+        ).trim() || "User";
 
-      try {
-        /* GET CURRENT USER */
+      /*
+       * Generate IDs BEFORE inserting.
+       *
+       * This guarantees the exact qr_token saved
+       * in Supabase is the exact token used to
+       * generate the QR.
+       */
+      const passId =
+        newPassId();
 
-        const {
-          data: {
-            user,
-          },
-        } =
-          await supabase.auth.getUser();
+      const token =
+        newToken();
 
-        if (!user) {
-          throw new Error(
-            "You must be logged in to create a pass."
-          );
-        }
+      const { data, error: insertError } =
+        await supabase
+          .from("guests")
+          .insert({
+            event_id: selectedEvent.id,
+            name: guestName,
+            phone: null,
+            pass_type: passType,
+            pass_id: passId,
+            qr_token: token,
+            status: "valid",
+            notes: null,
+            created_by: user.id,
+            created_by_name: creatorName,
+          } as never)
+          .select("*")
+          .single();
 
-        /* CREATE GUEST */
+      if (insertError) {
+        throw new Error(
+          insertError.message
+        );
+      }
 
-        const passId =
-          newPassId();
+      const guest =
+        data as Guest;
 
-        const token =
-          newToken();
+      /*
+       * Generate QR from the EXACT token
+       * stored in Supabase.
+       */
+      const qr =
+        await generateQr(
+          guest.qr_token
+        );
 
-        const guestInsert = {
-          event_id:
-            selectedEvent.id,
+      if (
+        !qr ||
+        !qr.startsWith(
+          "data:image/"
+        )
+      ) {
+        throw new Error(
+          "QR code generation failed."
+        );
+      }
 
-          name:
-            guestName,
+      /*
+       * Update React state.
+       */
+      setBgVersion(
+        Date.now()
+      );
 
+      setGeneratedGuest(
+        guest
+      );
+
+      setQrDataUrl(
+        qr
+      );
+
+      setSuccess(
+        `Pass created for ${guestName}.`
+      );
+
+      setName("");
+
+      if (isAdmin) {
+        await loadSubmissions();
+      } else {
+        const record = guest as GuestRecord;
+        setSubmissions((current) => {
+          if (current.some((item) => item.id === record.id)) {
+            return current;
+          }
+          return [record, ...current];
+        });
+        setSubmissionsLoading(false);
+      }
+
+      /*
+       * Wait for React to render the new
+       * guest + QR before generating PDF.
+       */
+      await sleep(150);
+
+      /*
+       * Generate PDF using the exact QR.
+       */
+      await downloadPdf(
+        guest,
+        qr
+      );
+
+      /* --------------------------------------------------------- */
+      /* MONEY / ISSUANCE LEDGER                                  */
+      /* --------------------------------------------------------- */
+
+      const issuedPrice = getPassPrice(guest.pass_type);
+      const pdfPath = `${guest.event_id}/${guest.pass_id}/${guest.pass_id}.pdf`;
+
+      const { error: requestError } = await supabase
+        .from("guest_requests")
+        .insert({
+          event_id: guest.event_id,
+          guest_name: guest.name,
           phone: null,
-
-          pass_type:
-            passType,
-
-          pass_id:
-            passId,
-
-          qr_token:
-            token,
-
-          status:
-            "valid",
-
+          pass_type: guest.pass_type,
           notes: null,
-        };
+          status: "generated",
+          submitted_by: user.id,
+          guest_id: guest.id,
+          pdf_path: pdfPath,
+          generated_at: new Date().toISOString(),
+          issued_price: issuedPrice,
+          drive_file_id: null,
+        });
 
-        const {
-          data,
-          error:
-            insertError,
-        } =
-          await supabase
-            .from("guests")
-            .insert(
-              guestInsert
-            )
-            .select("*")
-            .single();
-
-        if (
-          insertError
-        ) {
-          throw new Error(
-            insertError.message
-          );
-        }
-
-        if (!data) {
-          throw new Error(
-            "Guest was not created."
-          );
-        }
-
-        const guest =
-          data as Guest;
-
-        /* GENERATE QR */
-
-        const qr =
-          await generateQr(
-            guest.qr_token
-          );
-
-        if (
-          !qr ||
-          !qr.startsWith(
-            "data:image/"
-          )
-        ) {
-          throw new Error(
-            "QR code generation failed."
-          );
-        }
-
-        setBgVersion(
-          Date.now()
-        );
-
-        setGeneratedGuest(
-          guest
-        );
-
-        setQrDataUrl(
-          qr
-        );
-
-        await sleep(250);
-
-        /* CREATE PDF + STORAGE */
-
-        const {
-          pdf,
-          storagePath,
-        } =
-          await createPdf(
-            guest,
-            qr,
-            selectedEvent
-          );
-
-        /* ===================================================== */
-        /* CREATE STATISTICS RECORD                              */
-        /* ===================================================== */
-
-        const issuedPrice =
-          getPassPrice(
-            guest.pass_type
-          );
-
-        const {
-          error:
-            requestError,
-        } =
-          await supabase
-            .from(
-              "guest_requests"
-            )
-            .insert({
-              event_id:
-                guest.event_id,
-
-              guest_name:
-                guest.name,
-
-              phone:
-                guest.phone ??
-                null,
-
-              pass_type:
-                guest.pass_type,
-
-              notes:
-                guest.notes ??
-                null,
-
-              status:
-                "generated",
-
-              submitted_by:
-                user.id,
-
-              guest_id:
-                guest.id,
-
-              pdf_path:
-                storagePath,
-
-              generated_at:
-                new Date().toISOString(),
-
-              issued_price:
-                issuedPrice,
-
-              drive_file_id:
-                null,
-            });
-
-        if (
-          requestError
-        ) {
-          /*
-           * The pass itself has already been created.
-           * Show the exact statistics error instead
-           * of pretending the ledger was saved.
-           */
-          console.error(
-            "Statistics record failed:",
-            requestError
-          );
-
-          const safeName =
-            guest.name
-              .replace(
-                /[^a-z0-9]+/gi,
-                "-"
-              )
-              .replace(
-                /^-|-$/g,
-                ""
-              );
-
-          pdf.save(
-            `${guest.pass_id}-${safeName}.pdf`
-          );
-
-          setError(
-            `Pass was created and downloaded, but the statistics record could not be saved: ${requestError.message}`
-          );
-
-          return;
-        }
-
-        /* DOWNLOAD */
-
-        const safeName =
-          guest.name
-            .replace(
-              /[^a-z0-9]+/gi,
-              "-"
-            )
-            .replace(
-              /^-|-$/g,
-              ""
-            );
-
-        pdf.save(
-          `${guest.pass_id}-${safeName}.pdf`
-        );
-
-        setSuccess(
-          `Pass created successfully for ${guest.name}.`
-        );
-
-        setName("");
-        setPassType(
-          "Regular"
-        );
-      } catch (err) {
-        console.error(
-          "PASS CREATION ERROR:",
-          err
-        );
-
+      if (requestError) {
+        console.error("Money ledger save failed:", requestError);
         setError(
-          err instanceof Error
-            ? err.message
-            : "Could not create the pass."
+          `Pass was created and downloaded, but the money record could not be saved: ${requestError.message}`
         );
-      } finally {
-        setLoading(false);
+        await loadSubmissions();
+        return;
       }
-    };
 
-  /* ========================================================= */
-  /* UI                                                         */
-  /* ========================================================= */
+    } catch (err) {
+      const message =
+        err instanceof Error
+          ? err.message
+          : "Failed to create pass.";
+
+      console.error(
+        "Pass generation error:",
+        err
+      );
+
+      setError(message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  /* ========================================================================= */
+  /* UI                                                                        */
+  /* ========================================================================= */
 
   return (
     <div
@@ -1550,8 +1542,7 @@ export default function CreatePass({
         style={{
           marginBottom: 24,
           display: "flex",
-          alignItems:
-            "flex-end",
+          alignItems: "flex-end",
           justifyContent:
             "space-between",
           gap: 20,
@@ -1563,8 +1554,7 @@ export default function CreatePass({
             style={{
               marginBottom: 6,
               fontSize: 11,
-              color:
-                "var(--text3)",
+              color: "var(--text3)",
               letterSpacing: 3,
               textTransform:
                 "uppercase",
@@ -1589,17 +1579,16 @@ export default function CreatePass({
             style={{
               marginTop: 7,
               fontSize: 13,
-              color:
-                "var(--text2)",
+              color: "var(--text2)",
             }}
           >
-            Create a pass directly
-            and download it instantly.
+            Generate a unique luxury
+            entry pass.
           </div>
         </div>
       </div>
 
-      {/* FORM */}
+      {/* FORM CARD */}
 
       <div
         className="card"
@@ -1624,8 +1613,7 @@ export default function CreatePass({
                 display: "block",
                 marginBottom: 8,
                 fontSize: 11,
-                color:
-                  "var(--text3)",
+                color: "var(--text3)",
                 letterSpacing: 1.2,
                 textTransform:
                   "uppercase",
@@ -1643,7 +1631,6 @@ export default function CreatePass({
                   e.target.value
                 )
               }
-              disabled={loading}
               style={{
                 width: "100%",
                 boxSizing:
@@ -1667,16 +1654,10 @@ export default function CreatePass({
               {events.map(
                 (event) => (
                   <option
-                    key={
-                      event.id
-                    }
-                    value={
-                      event.id
-                    }
+                    key={event.id}
+                    value={event.id}
                   >
-                    {
-                      event.name
-                    }
+                    {event.name}
                   </option>
                 )
               )}
@@ -1691,8 +1672,7 @@ export default function CreatePass({
                 display: "block",
                 marginBottom: 8,
                 fontSize: 11,
-                color:
-                  "var(--text3)",
+                color: "var(--text3)",
                 letterSpacing: 1.2,
                 textTransform:
                   "uppercase",
@@ -1710,14 +1690,12 @@ export default function CreatePass({
               }
               onKeyDown={(e) => {
                 if (
-                  e.key ===
-                  "Enter"
+                  e.key === "Enter"
                 ) {
                   generatePass();
                 }
               }}
               placeholder="Enter guest name"
-              disabled={loading}
               style={{
                 width: "100%",
                 boxSizing:
@@ -1744,8 +1722,7 @@ export default function CreatePass({
                 display: "block",
                 marginBottom: 8,
                 fontSize: 11,
-                color:
-                  "var(--text3)",
+                color: "var(--text3)",
                 letterSpacing: 1.2,
                 textTransform:
                   "uppercase",
@@ -1761,7 +1738,6 @@ export default function CreatePass({
                   e.target.value
                 )
               }
-              disabled={loading}
               style={{
                 width: "100%",
                 boxSizing:
@@ -1784,19 +1760,10 @@ export default function CreatePass({
                     key={type}
                     value={type}
                   >
-                    {type} — ₹
-                    {getPassPrice(
-                      type
-                    )}
+                    {type}
                     {" · "}
-                    {getHeadCount(
-                      type
-                    )}{" "}
-                    {getHeadCount(
-                      type
-                    ) === 1
-                      ? "Head"
-                      : "Heads"}
+                    {getHeads(type)} {getHeads(type) === 1 ? "Head" : "Heads"}
+                    {isAdmin && ` — ₹${getPassPrice(type)}`}
                   </option>
                 )
               )}
@@ -1804,7 +1771,7 @@ export default function CreatePass({
           </div>
         </div>
 
-        {/* EVENT DETAILS */}
+        {/* SELECTED EVENT DETAILS */}
 
         {selectedEvent && (
           <div
@@ -1831,11 +1798,8 @@ export default function CreatePass({
               >
                 EVENT{" "}
               </span>
-
               <strong>
-                {
-                  selectedEvent.name
-                }
+                {selectedEvent.name}
               </strong>
             </div>
 
@@ -1848,7 +1812,6 @@ export default function CreatePass({
               >
                 DATE{" "}
               </span>
-
               <strong>
                 {formatDate(
                   selectedEvent.date
@@ -1865,7 +1828,6 @@ export default function CreatePass({
               >
                 TIME{" "}
               </span>
-
               <strong>
                 {formatTime(
                   selectedEvent.time
@@ -1882,7 +1844,6 @@ export default function CreatePass({
               >
                 VENUE{" "}
               </span>
-
               <strong>
                 {venueText(
                   selectedEvent.venue
@@ -1892,7 +1853,7 @@ export default function CreatePass({
           </div>
         )}
 
-        {/* GENERATE */}
+        {/* GENERATE BUTTON */}
 
         <div
           style={{
@@ -1904,13 +1865,8 @@ export default function CreatePass({
         >
           <button
             className="btn btn-primary"
-            onClick={
-              generatePass
-            }
-            disabled={
-              loading ||
-              !selectedEvent
-            }
+            onClick={generatePass}
+            disabled={loading}
             style={{
               minWidth: 190,
               display: "flex",
@@ -1978,10 +1934,11 @@ export default function CreatePass({
             className="card"
             style={{
               padding: 24,
-              textAlign:
-                "center",
+              textAlign: "center",
             }}
           >
+            {/* PREVIEW HEADER */}
+
             <div
               style={{
                 marginBottom: 20,
@@ -1991,8 +1948,7 @@ export default function CreatePass({
                 justifyContent:
                   "space-between",
                 gap: 20,
-                flexWrap:
-                  "wrap",
+                flexWrap: "wrap",
               }}
             >
               <div
@@ -2043,41 +1999,10 @@ export default function CreatePass({
               <button
                 className="btn"
                 onClick={() =>
-                  createPdf(
+                  downloadPdf(
                     generatedGuest,
-                    qrDataUrl,
-                    passEvent
+                    qrDataUrl
                   )
-                    .then(
-                      ({
-                        pdf,
-                      }) => {
-                        const safeName =
-                          generatedGuest.name
-                            .replace(
-                              /[^a-z0-9]+/gi,
-                              "-"
-                            )
-                            .replace(
-                              /^-|-$/g,
-                              ""
-                            );
-
-                        pdf.save(
-                          `${generatedGuest.pass_id}-${safeName}.pdf`
-                        );
-                      }
-                    )
-                    .catch(
-                      (err) => {
-                        setError(
-                          err instanceof
-                            Error
-                            ? err.message
-                            : "Could not download the PDF."
-                        );
-                      }
-                    )
                 }
                 style={{
                   display: "flex",
@@ -2094,6 +2019,8 @@ export default function CreatePass({
               </button>
             </div>
 
+            {/* PASS PREVIEW */}
+
             <div
               style={{
                 width: "100%",
@@ -2101,16 +2028,14 @@ export default function CreatePass({
                 display: "flex",
                 justifyContent:
                   "center",
-                paddingBottom:
-                  15,
+                paddingBottom: 15,
               }}
             >
               <div
                 style={{
                   width: 430,
                   height: 645,
-                  overflow:
-                    "hidden",
+                  overflow: "hidden",
                   borderRadius: 18,
                   boxShadow:
                     "0 25px 75px rgba(0,0,0,.48), 0 0 35px rgba(230,190,92,.10)",
@@ -2146,7 +2071,328 @@ export default function CreatePass({
           </div>
         )}
 
-      {/* HIDDEN FULL SIZE PASS */}
+      {/* ===================================================================== */}
+      {/* SUBMISSIONS / ALL TEAM REQUESTS                                     */}
+      {/* ===================================================================== */}
+
+      <div
+        className="card"
+        style={{
+          padding: 24,
+          marginTop: 24,
+        }}
+      >
+        <div
+          style={{
+            marginBottom: 18,
+            display: "flex",
+            alignItems: "flex-end",
+            justifyContent: "space-between",
+            gap: 16,
+            flexWrap: "wrap",
+          }}
+        >
+          <div>
+            <div
+              style={{
+                fontSize: 10,
+                color: "var(--text3)",
+                letterSpacing: 2,
+                textTransform: "uppercase",
+              }}
+            >
+              {isAdmin ? "Team Activity" : "Your Activity"}
+            </div>
+
+            <h2
+              style={{
+                margin: "5px 0 0",
+                fontFamily: "Georgia, 'Times New Roman', serif",
+                fontWeight: 500,
+                fontSize: 28,
+              }}
+            >
+              {isAdmin ? "All Team Requests" : "Submission"}
+            </h2>
+
+            <div
+              style={{
+                marginTop: 6,
+                fontSize: 12,
+                color: "var(--text3)",
+              }}
+            >
+              {isAdmin
+                ? "All generated passes from the team."
+                : "Your generated passes. Download or delete anytime."}
+            </div>
+          </div>
+
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              flexWrap: "wrap",
+              justifyContent: "flex-end",
+            }}
+          >
+            <div
+              style={{
+                padding: "8px 12px",
+                borderRadius: 999,
+                border: "1px solid var(--hair)",
+                color: "var(--text2)",
+                fontSize: 12,
+              }}
+            >
+              {submissions.length} {submissions.length === 1 ? "Pass" : "Passes"}
+            </div>
+
+            {isAdmin && (
+              <div
+                style={{
+                  padding: "8px 12px",
+                  borderRadius: 999,
+                  border: "1px solid rgba(242,205,123,.22)",
+                  color: "#f2d27f",
+                  fontSize: 12,
+                }}
+              >
+                ₹{submissions.reduce((sum, item) => sum + getPassPrice(item.pass_type), 0)} Collected
+              </div>
+            )}
+          </div>
+        </div>
+
+        {submissionsLoading ? (
+          <div
+            style={{
+              padding: "42px 16px",
+              textAlign: "center",
+              color: "var(--text3)",
+              fontSize: 13,
+            }}
+          >
+            Loading passes…
+          </div>
+        ) : !submissions.length ? (
+          <div
+            style={{
+              padding: "42px 16px",
+              textAlign: "center",
+              border: "1px dashed var(--hair)",
+              borderRadius: 14,
+              color: "var(--text3)",
+              fontSize: 13,
+            }}
+          >
+            {isAdmin
+              ? "No passes have been generated for this event yet."
+              : "You have not generated any passes yet."}
+          </div>
+        ) : (
+          <div style={{ overflowX: "auto" }}>
+            <table
+              style={{
+                width: "100%",
+                minWidth: isAdmin ? 920 : 720,
+                borderCollapse: "collapse",
+                textAlign: "left",
+              }}
+            >
+              <thead>
+                <tr>
+                  {[
+                    "Guest",
+                    ...(isAdmin ? ["Event", "Generated By"] : ["Event"]),
+                    "Pass Type",
+                    ...(isAdmin ? ["Price"] : []),
+                    "Heads",
+                    "Created",
+                    "Actions",
+                  ].map((heading) => (
+                    <th
+                      key={heading}
+                      style={{
+                        padding: "11px 12px",
+                        borderBottom: "1px solid var(--hair)",
+                        color: "var(--text3)",
+                        fontSize: 9,
+                        letterSpacing: 1.5,
+                        textTransform: "uppercase",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {heading}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+
+              <tbody>
+                {submissions.map((guest) => (
+                  <tr key={guest.id}>
+                    <td
+                      style={{
+                        padding: "15px 12px",
+                        borderBottom: "1px solid var(--hair)",
+                      }}
+                    >
+                      <div
+                        style={{
+                          fontWeight: 700,
+                          color: "var(--text)",
+                          fontSize: 13,
+                        }}
+                      >
+                        {guest.name}
+                      </div>
+                      <div
+                        style={{
+                          marginTop: 4,
+                          color: "var(--text3)",
+                          fontSize: 11,
+                        }}
+                      >
+                        {guest.pass_id}
+                      </div>
+                    </td>
+
+                    <td
+                      style={{
+                        padding: "15px 12px",
+                        borderBottom: "1px solid var(--hair)",
+                        color: "var(--text2)",
+                        fontSize: 12,
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {getEventForGuest(guest)?.name || "Unknown event"}
+                    </td>
+
+                    {isAdmin && (
+                      <td
+                        style={{
+                          padding: "15px 12px",
+                          borderBottom: "1px solid var(--hair)",
+                          color: "var(--text2)",
+                          fontSize: 12,
+                        }}
+                      >
+                        {guest.created_by_name || "Unknown member"}
+                      </td>
+                    )}
+
+                    <td
+                      style={{
+                        padding: "15px 12px",
+                        borderBottom: "1px solid var(--hair)",
+                        color: "var(--text2)",
+                        fontSize: 12,
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {guest.pass_type}
+                    </td>
+
+                    {isAdmin && (
+                      <td
+                        style={{
+                          padding: "15px 12px",
+                          borderBottom: "1px solid var(--hair)",
+                          color: "var(--text)",
+                          fontSize: 12,
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        ₹{getPassPrice(guest.pass_type)}
+                      </td>
+                    )}
+
+                    <td
+                      style={{
+                        padding: "15px 12px",
+                        borderBottom: "1px solid var(--hair)",
+                        color: "var(--text)",
+                        fontSize: 12,
+                      }}
+                    >
+                      {getHeads(guest.pass_type)}
+                    </td>
+
+                    <td
+                      style={{
+                        padding: "15px 12px",
+                        borderBottom: "1px solid var(--hair)",
+                        color: "var(--text3)",
+                        fontSize: 11,
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {formatCreatedAt(guest.created_at)}
+                    </td>
+
+                    <td
+                      style={{
+                        padding: "15px 12px",
+                        borderBottom: "1px solid var(--hair)",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 8,
+                        }}
+                      >
+                        <button
+                          className="btn"
+                          onClick={() => downloadSubmissionPdf(guest)}
+                          disabled={deletingId === guest.id}
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 7,
+                          }}
+                        >
+                          <Icon name="download" size={14} />
+                          Download PDF
+                        </button>
+
+                        <button
+                          type="button"
+                          className="btn"
+                          onClick={() => deleteSubmission(guest)}
+                          disabled={deletingId === guest.id}
+                          aria-label={`Delete guest ${guest.name}`}
+                          title="Delete this guest pass"
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            gap: 7,
+                            color: "#ff8f8f",
+                            borderColor: "rgba(255,100,100,.30)",
+                            background: "rgba(255,80,80,.05)",
+                            minWidth: 115,
+                          }}
+                        >
+                          <Icon name="ban" size={14} />
+                          {deletingId === guest.id ? "Deleting…" : "Delete Guest"}
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* HIDDEN FULL-SIZE PASS USED FOR PDF */}
 
       <div
         style={{
